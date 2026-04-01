@@ -9,6 +9,7 @@ A production-grade, broker-agnostic trading monitoring service. Receives signals
 - [Features](#features)
 - [Architecture](#architecture)
 - [Design Patterns](#design-patterns)
+- [SOLID Principles](#solid-principles)
 - [Project Structure](#project-structure)
 - [How It Works](#how-it-works)
   - [Webhook Flow](#1-webhook-flow)
@@ -16,6 +17,7 @@ A production-grade, broker-agnostic trading monitoring service. Receives signals
   - [Kill Switch](#3-kill-switch)
   - [External Trade Detection](#4-external-trade-detection)
   - [Capital Configuration](#5-capital-configuration)
+- [Groww API Reference](#groww-api-reference)
 - [Adding a New Broker](#adding-a-new-broker)
 - [Configuration](#configuration)
 - [API Endpoints](#api-endpoints)
@@ -154,7 +156,7 @@ A production-grade, broker-agnostic trading monitoring service. Receives signals
 │   └──────────────────────────────────┬──────────────────────────────────────────┘  │
 │                                       ▼                                             │
 │                         ┌─────────────────────────┐                                │
-│                         │    SQLite  (trades.db)   │                                │
+│                         │  PostgreSQL (local)      │                                │
 │                         │                          │                                │
 │                         │  trades table            │                                │
 │                         │  daily_stats table       │                                │
@@ -207,6 +209,162 @@ A production-grade, broker-agnostic trading monitoring service. Receives signals
 
 ---
 
+## SOLID Principles
+
+### S — Single Responsibility
+Every class has exactly one reason to change.
+
+| Class | Single Responsibility |
+|-------|-----------------------|
+| `GrowwAdapter` | Translate our generic order calls into Groww REST API calls |
+| `GrowwFeed` | Manage the WebSocket connection and deliver price ticks |
+| `TrailingStoplossStrategy` | Calculate SL levels — nothing else |
+| `TradeMonitor` | Watch one trade and fire exit when SL is hit |
+| `TradeRepository` | All DB reads/writes for trades — nothing else |
+| `DailyRiskManager` | Track daily P&L and decide if trading should halt |
+| `BuyCommand` / `SellCommand` | Encapsulate a single order action |
+
+> Inspired by pykiteconnect splitting `KiteConnect` (REST) and `KiteTicker` (WebSocket) into two completely separate classes. We follow the same split: `GrowwAdapter` vs `GrowwFeed`.
+
+---
+
+### O — Open/Closed
+Open for extension, closed for modification.
+
+- `BrokerAdapter` is the stable abstraction. Adding Zerodha = new file, zero edits to existing code.
+- `StoplossStrategy` is abstract. Adding ATR-based SL = new class, no changes to `TradeMonitor`.
+- `BrokerFactory._registry` is a dict — extend by calling `register()`, never edit the factory itself.
+
+---
+
+### L — Liskov Substitution
+Any `BrokerAdapter` subclass must be safely swappable for another.
+
+`GrowwAdapter`, `ZerodhaAdapter`, `UpstoxAdapter` — all must:
+- Return the same normalised dict shape from `get_positions()`
+- Raise `BrokerOrderError` (never raw HTTP exceptions) on failure
+- Accept the same arguments in `place_order()`
+
+The engine never knows which broker is running. If swapping breaks something, the adapter violated LSP.
+
+---
+
+### I — Interface Segregation
+Don't force a class to implement methods it doesn't use.
+
+The `BrokerAdapter` is split into two focused interfaces:
+
+```
+BrokerRestAdapter        BrokerFeedAdapter
+─────────────────        ─────────────────
+place_order()            subscribe(symbols, callback)
+cancel_order()           unsubscribe(symbols)
+get_positions()          connect()
+get_ltp()                disconnect()
+```
+
+`GrowwAdapter` implements `BrokerRestAdapter`.
+`GrowwFeed` implements `BrokerFeedAdapter`.
+
+Neither is forced to implement the other's methods.
+
+> pykiteconnect gets this right: `KiteConnect` never handles WebSocket frames; `KiteTicker` never places orders.
+
+---
+
+### D — Dependency Inversion
+High-level modules depend on abstractions, not concrete implementations.
+
+```
+WebhookService          depends on →   BrokerRestAdapter  (abstract)
+TradeMonitor            depends on →   BrokerRestAdapter  (abstract)
+MonitorService          depends on →   BrokerFeedAdapter  (abstract)
+TradeManager            depends on →   BrokerRestAdapter + BrokerFeedAdapter
+```
+
+`GrowwAdapter` is only ever referenced in:
+1. `brokers/factory.py` — to create the instance
+2. `.env` — `BROKER=groww`
+
+Nowhere else in the codebase imports `GrowwAdapter` directly.
+
+---
+
+### Exception Hierarchy (inspired by pykiteconnect's KiteException tree)
+
+```
+BrokerException                  ← base, always catch this at minimum
+├── BrokerAuthError              ← token expired, login failed
+├── BrokerOrderError             ← order rejected, invalid params
+├── BrokerNetworkError           ← timeout, connection refused
+└── BrokerDataError              ← malformed response from broker
+
+AppException                     ← our app-level errors
+├── InvalidSignalError           ← bad webhook payload or wrong secret
+├── KillSwitchActiveError        ← new trade blocked by daily limits
+├── TradeNotFoundError           ← trade ID not in DB
+└── InvalidStateTransitionError  ← e.g. PENDING → CLOSED not allowed
+```
+
+Each exception carries `.code` (HTTP status) and `.message`. Same pattern as pykiteconnect.
+
+---
+
+### Constants (same pattern as pykiteconnect's class-level constants)
+
+All broker constants live in `brokers/base.py` alongside the abstract class:
+
+```python
+class TransactionType(str, Enum):
+    BUY  = "BUY"
+    SELL = "SELL"
+
+class OrderType(str, Enum):
+    MARKET       = "MARKET"
+    LIMIT        = "LIMIT"
+    STOP_LOSS    = "SL"
+    STOP_LOSS_MKT = "SL-M"
+
+class Segment(str, Enum):
+    CASH = "CASH"
+    FNO  = "FNO"
+
+class Product(str, Enum):
+    MIS  = "MIS"    # Intraday
+    CNC  = "CNC"    # Delivery
+    NRML = "NRML"   # Carry forward (F&O)
+```
+
+Using `str, Enum` means they serialize to plain strings in JSON automatically — no extra conversion needed.
+
+---
+
+### Callback Pattern (from pykiteconnect's on_ticks / on_error style)
+
+`GrowwFeed` uses the same optional callback approach:
+
+```python
+feed.on_connect   = None   # called when WS connects
+feed.on_tick      = None   # called on every price update → (symbol, ltp)
+feed.on_error     = None   # called on WS error
+feed.on_close     = None   # called on disconnect
+feed.on_reconnect = None   # called on each retry attempt
+```
+
+Set only what you need. Unset callbacks are silently skipped — no crashes.
+
+---
+
+### Reconnection Strategy (same as KiteTicker's exponential backoff)
+
+`GrowwFeed` will implement:
+- Ping every **2.5s**, expect pong within **5s**
+- On disconnect: retry with backoff — `min(2^attempt, 60)` seconds
+- On reconnect: automatically re-subscribe all previously subscribed symbols
+- Max **50 retries** (configurable via env)
+
+---
+
 ## Project Structure
 
 ```
@@ -216,49 +374,58 @@ monitering_service/
 ├── config.py                      # All settings (env vars + capital + kill switch limits)
 ├── requirements.txt
 ├── .env.example
-├── trades.db                      # SQLite — auto-created on first run
 │
 ├── core/
-│   ├── database.py                # Async SQLite engine, session factory
+│   ├── __init__.py
+│   ├── database.py                # Async PostgreSQL engine (asyncpg), session factory
 │   ├── exceptions.py              # Domain exceptions
 │   └── logger.py                  # Structured logger
 │
 ├── models/
-│   └── trade.py                   # Trade ORM model (SQLAlchemy)
+│   ├── __init__.py
+│   └── trade.py                   # SQLAlchemy ORM — trades + daily_stats tables
 │
 ├── schemas/
+│   ├── __init__.py
 │   ├── webhook.py                 # SignalPayload (TradingView POST body)
 │   └── trade.py                   # TradeRead (API response)
 │
 ├── brokers/
-│   ├── base.py                    # BrokerAdapter abstract class [ADAPTER]
-│   ├── factory.py                 # BrokerFactory [FACTORY]
+│   ├── __init__.py
+│   ├── base.py                    # BrokerAdapter abstract class      [ADAPTER]
+│   ├── factory.py                 # BrokerFactory.create(name)        [FACTORY]
 │   └── groww/
-│       ├── auth.py                # GrowwAuth singleton — token management
+│       ├── __init__.py
+│       ├── auth.py                # GrowwAuth — TOTP token flow (pyotp)
 │       ├── adapter.py             # GrowwAdapter implements BrokerAdapter
-│       └── websocket.py          # GrowwPriceFeed — WebSocket live prices
+│       └── feed.py                # GrowwFeed wrapper — WebSocket via growwapi
 │
 ├── engine/
-│   ├── stoploss_strategy.py      # TrailingStoplossStrategy [STRATEGY]
-│   ├── trade_command.py          # BuyCommand, SellCommand [COMMAND]
-│   ├── trade_state.py            # TradeState enum + StateMachine [STATE]
-│   ├── price_observer.py         # PriceObserver interface [OBSERVER]
-│   └── trade_manager.py          # TradeManager singleton [SINGLETON]
+│   ├── __init__.py
+│   ├── trade_state.py             # TradeState enum + StateMachine     [STATE]
+│   ├── stoploss_strategy.py       # TrailingStoplossStrategy           [STRATEGY]
+│   ├── trade_command.py           # BuyCommand, SellCommand            [COMMAND]
+│   ├── price_observer.py          # PriceObserver ABC + TradeMonitor   [OBSERVER]
+│   └── trade_manager.py           # TradeManager singleton             [SINGLETON]
 │
 ├── risk/
-│   └── daily_risk_manager.py     # Kill switch — daily loss/target limits
+│   ├── __init__.py
+│   └── daily_risk_manager.py      # Kill switch — daily loss + target limits
 │
 ├── repository/
-│   └── trade_repository.py       # All DB CRUD [REPOSITORY]
+│   ├── __init__.py
+│   └── trade_repository.py        # All DB CRUD for trades + daily_stats [REPOSITORY]
 │
 ├── services/
-│   ├── webhook_service.py        # Orchestrates webhook → trade flow
-│   └── monitor_service.py        # Manages background tasks
+│   ├── __init__.py
+│   ├── webhook_service.py         # Orchestrates: signal → kill switch → BuyCommand → monitor
+│   └── monitor_service.py         # Background tasks: price feed + external scan loop
 │
 └── api/
-    ├── webhook_router.py         # POST /webhook/signal
-    ├── trades_router.py          # GET /trades, GET /trades/{id}
-    └── killswitch_router.py      # GET/POST /killswitch
+    ├── __init__.py
+    ├── webhook_router.py          # POST /webhook/signal
+    ├── trades_router.py           # GET /trades  GET /trades/{id}  GET /trades/summary
+    └── killswitch_router.py       # GET /killswitch  POST /killswitch
 ```
 
 ---
@@ -366,6 +533,75 @@ Quantity is calculated as: `qty = floor(capital / ltp)`
 
 ---
 
+## Groww API Reference
+
+### Installation
+```bash
+pip install growwapi pyotp
+```
+
+### Authentication (TOTP — recommended)
+```python
+import pyotp
+from growwapi import GrowwAPI
+
+totp = pyotp.TOTP('YOUR_TOTP_SECRET').now()
+access_token = GrowwAPI.get_access_token(api_key="YOUR_API_KEY", totp=totp)
+groww = GrowwAPI(access_token)
+```
+
+### Place Order
+```python
+response = groww.place_order(
+    trading_symbol="NIFTY24DEC21000CE",
+    quantity=1,
+    validity=groww.VALIDITY_DAY,
+    exchange=groww.EXCHANGE_NSE,
+    segment=groww.SEGMENT_FNO,          # FNO for options
+    product=groww.PRODUCT_MIS,          # MIS for intraday
+    order_type=groww.ORDER_TYPE_MARKET,
+    transaction_type=groww.TRANSACTION_TYPE_BUY,
+)
+# { "groww_order_id": "GMK39038...", "order_status": "OPEN", ... }
+```
+
+### Get Positions
+```python
+positions = groww.get_positions_for_user()
+# returns list of positions with avg_price, quantity, trading_symbol, segment
+```
+
+### Get LTP (up to 50 instruments)
+```python
+ltp = groww.get_ltp(
+    segment=groww.SEGMENT_FNO,
+    exchange_trading_symbols=("NSE_NIFTY24DEC21000CE",)
+)
+```
+
+### WebSocket Price Feed
+```python
+from growwapi import GrowwFeed
+
+feed = GrowwFeed(groww)
+
+def on_tick(meta):
+    data = feed.get_ltp()   # { "NSE_NIFTY24DEC21000CE": 250.5, ... }
+
+feed.subscribe_ltp(["NSE_NIFTY24DEC21000CE"], on_data_received=on_tick)
+feed.consume()   # blocking — run in a thread
+```
+
+### Rate Limits
+
+| Type | Per Second | Per Minute |
+|------|-----------|-----------|
+| Orders | 10 | 250 |
+| Live Data (LTP/OHLC) | 10 | 300 |
+| Portfolio / Other | 20 | 500 |
+
+---
+
 ## Adding a New Broker
 
 1. Create `brokers/<broker_name>/adapter.py`
@@ -393,15 +629,13 @@ Copy `.env.example` to `.env` and fill in your values:
 ```env
 # Broker
 BROKER=groww
-GROWW_CLIENT_ID=
-GROWW_CLIENT_SECRET=
-GROWW_TOTP_SECRET=
-GROWW_PIN=
+GROWW_API_KEY=
+GROWW_TOTP_SECRET=          # base32 secret from Groww API keys page
 
 # Webhook
 WEBHOOK_SECRET=your-secret-here
 
-# Capital (per trade, since Groww has no balance API)
+# Capital (manual — Groww has no balance API)
 CAPITAL_INDEX_OPTION=50000
 CAPITAL_STOCK_OPTION=25000
 
@@ -410,11 +644,14 @@ SL_PERCENT=5.0
 TRAILING_STEP=5.0
 
 # Kill Switch
-DAILY_LOSS_LIMIT=5000     # Halt if total day loss >= ₹5000
-DAILY_TARGET=10000        # Halt if total day profit >= ₹10000
+DAILY_LOSS_LIMIT=5000       # Halt if day loss >= ₹5000
+DAILY_TARGET=10000          # Halt if day profit >= ₹10000
 
-# Database
-DATABASE_URL=sqlite+aiosqlite:///./trades.db
+# Database (local PostgreSQL)
+DATABASE_URL=postgresql+asyncpg://user:password@localhost:5432/trading_monitor
+
+# External scan interval
+EXTERNAL_SCAN_INTERVAL=60
 ```
 
 ---
@@ -440,17 +677,21 @@ pip install -r requirements.txt
 
 # 2. Configure
 cp .env.example .env
-# Edit .env with your credentials and capital limits
+# fill in: GROWW_API_KEY, GROWW_TOTP_SECRET, DATABASE_URL, WEBHOOK_SECRET
 
-# 3. Run
+# 3. Create PostgreSQL database
+createdb trading_monitor
+
+# 4. Run
 uvicorn main:app --host 0.0.0.0 --port 8000 --reload
 ```
 
-The service will:
-- Create `trades.db` on first run
-- Authenticate with Groww
-- Start the WebSocket price feed
-- Start the 60-second external trade scanner
+On startup the service will:
+- Run DB migrations (create tables if not exist)
+- Authenticate with Groww via TOTP
+- Load any `OPEN` trades from DB and resume monitoring them
+- Start the WebSocket price feed (`GrowwFeed`)
+- Start the 60s external trade scanner
 - Begin accepting webhooks at `POST /webhook/signal`
 
 ---
