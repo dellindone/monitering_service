@@ -56,3 +56,19 @@ async def set_active_broker(body: ActiveBrokerRequest, db: AsyncSession = Depend
     """Switch the active broker. Service will reconnect with the new broker live."""
     await credential_manager.set_active_broker(body.broker_name)
     return {"message": f"Active broker switched to {body.broker_name}"}
+
+
+@router.delete("/{broker_name}")
+async def delete_credentials(broker_name: str, db: AsyncSession = Depends(get_db)):
+    """Delete a broker account. Cannot delete the active broker."""
+    record = await credentials_repo.get_by_broker(db, broker_name)
+    if not record:
+        from fastapi import HTTPException
+        raise HTTPException(status_code=404, detail=f"No credentials found for {broker_name}")
+    if record.is_active:
+        from fastapi import HTTPException
+        raise HTTPException(status_code=400, detail="Cannot delete the active broker. Switch to another account first.")
+    await db.delete(record)
+    await db.commit()
+    logger.info(f"Credentials deleted for broker: {broker_name}")
+    return {"message": f"Credentials deleted for {broker_name}"}

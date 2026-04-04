@@ -33,8 +33,10 @@ class GrowwAuth:
         from core.credential_manager import credential_manager
         try:
             creds       = credential_manager.get("groww")
-            api_key     = creds["api_key"]
-            totp_secret = creds["totp_secret"]
+            api_key     = creds["api_key"].strip()
+            totp_secret = creds["totp_secret"].strip().upper()
+            # Pad to valid base32 length
+            totp_secret += "=" * ((8 - len(totp_secret) % 8) % 8)
 
             totp         = pyotp.TOTP(totp_secret).now()
             access_token = GrowwAPI.get_access_token(api_key=api_key, totp=totp)
