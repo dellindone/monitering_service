@@ -21,9 +21,8 @@ logger   = get_logger(__name__)
 settings = get_settings()
 
 
-@asynccontextmanager
-async def lifespan(app: FastAPI):
-    # ── startup ───────────────────────────────────────────────────────
+async def _startup():
+    """Heavy startup — runs in background so health check passes immediately."""
     logger.info("Starting Monitoring Service...")
 
     # Create DB tables
@@ -31,32 +30,33 @@ async def lifespan(app: FastAPI):
         await conn.run_sync(Base.metadata.create_all)
     logger.info("Database tables ready")
 
-    # Seed Groww credentials from env if not in DB yet
+    # Seed + load credentials
     await _seed_credentials()
-
-    # Load all credentials into CredentialManager memory
     await credential_manager.load()
-
-    # Register refresh callback — called when credentials are updated via API
     credential_manager.on_refresh(monitor_service.on_credentials_refresh)
 
-    # Create broker adapters using active broker from DB
+    # Create broker adapters
     active_broker = credential_manager.get_active_broker()
     rest_broker   = BrokerFactory.create_rest(active_broker)
     feed_broker   = BrokerFactory.create_feed(active_broker)
 
-    # Start monitor service
+    # Start monitor service + signal consumer
     await monitor_service.start(rest_broker, feed_broker)
-
-    # Start signal consumer
-    consumer_task = asyncio.create_task(signal_consumer.start())
+    asyncio.create_task(signal_consumer.start())
 
     logger.info("Monitoring Service fully started")
+
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    # Run heavy startup in background — health check passes immediately
+    startup_task = asyncio.create_task(_startup())
+
     yield
 
     # ── shutdown ──────────────────────────────────────────────────────
     logger.info("Shutting down Monitoring Service...")
-    consumer_task.cancel()
+    startup_task.cancel()
     await monitor_service.stop()
     await engine.dispose()
     logger.info("Shutdown complete")
