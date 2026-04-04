@@ -9,6 +9,7 @@ from services.signal_consumer import signal_consumer
 from api.trades_router import router as trades_router
 from api.killswitch_router import router as killswitch_router
 from api.credentials_router import router as credentials_router
+from api.settings_router import router as settings_router
 from core.database import engine
 from core.exceptions import AppException, BrokerException
 from core.credential_manager import credential_manager
@@ -120,6 +121,7 @@ async def broker_exception_handler(request: Request, exc: BrokerException):
 app.include_router(trades_router)
 app.include_router(killswitch_router)
 app.include_router(credentials_router)
+app.include_router(settings_router)
 
 
 @app.get("/health")
