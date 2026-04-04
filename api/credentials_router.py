@@ -25,10 +25,10 @@ async def get_all_credentials(db: AsyncSession = Depends(get_db)):
     return {
         "brokers": [
             {
-                "broker_name": r.broker_name,
-                "is_active":   r.is_active,
-                "updated_at":  str(r.updated_at),
-                # never expose raw credentials in GET response
+                "broker_name":   r.broker_name,
+                "is_active":     r.is_active,
+                "updated_at":    str(r.updated_at),
+                "account_label": r.credentials.get("account_label") if r.credentials else None,
             }
             for r in records
         ]
