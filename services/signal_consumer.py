@@ -38,7 +38,7 @@ class SignalConsumer:
 
     async def _login(self) -> None:
         url = f"{self._settings.backend_base_url}/api/v1/auth/login"
-        async with httpx.AsyncClient(follow_redirects=True, verify=certifi.where()) as client:
+        async with httpx.AsyncClient(follow_redirects=True, verify=certifi.where(), timeout=30) as client:
             response = await client.post(url, json={
                 "email":    self._settings.backend_email,
                 "password": self._settings.backend_password,
@@ -51,7 +51,7 @@ class SignalConsumer:
 
     async def _refresh(self) -> None:
         url = f"{self._settings.backend_base_url}/api/v1/auth/refresh"
-        async with httpx.AsyncClient(follow_redirects=True, verify=certifi.where()) as client:
+        async with httpx.AsyncClient(follow_redirects=True, verify=certifi.where(), timeout=30) as client:
             response = await client.post(url, params={"refresh_token": self._refresh_token})
             if response.status_code == 401:
                 logger.warning("Refresh token expired — re-logging in")
@@ -116,7 +116,12 @@ class SignalConsumer:
         logger.info(f"Connecting to backend WebSocket: {ws_url}/ws/alerts")
 
         try:
-            async with websockets.connect(url, ssl=self._ssl_context()) as ws:
+            async with websockets.connect(
+                url,
+                ssl=self._ssl_context(),
+                ping_interval=30,
+                ping_timeout=10,
+            ) as ws:
                 logger.info("Backend WebSocket connected successfully")
                 async for raw in ws:
                     await self._handle_message(raw)
@@ -141,8 +146,15 @@ class SignalConsumer:
                 logger.info("SignalConsumer cancelled")
                 break
             except websockets.exceptions.ConnectionClosedError as e:
-                logger.warning(f"WebSocket connection closed: code={e.code} reason={e.reason} — refreshing token in 3s")
-                await self._refresh()
+                logger.warning(f"WebSocket connection closed: code={e.code} reason={e.reason} — reconnecting in 3s")
+                try:
+                    await self._refresh()
+                except Exception:
+                    logger.warning("Token refresh failed — re-logging in")
+                    try:
+                        await self._login()
+                    except Exception:
+                        logger.error(f"Re-login failed:\n{traceback.format_exc()}")
                 await asyncio.sleep(3)
             except Exception:
                 logger.error(f"SignalConsumer unexpected error — reconnecting in 5s")
