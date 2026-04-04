@@ -2,6 +2,7 @@ import asyncio
 from contextlib import asynccontextmanager
 from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse
+from fastapi.middleware.cors import CORSMiddleware
 
 from brokers.factory import BrokerFactory
 from services.moniter_service import monitor_service
@@ -102,6 +103,13 @@ app = FastAPI(
     title="Trading Monitoring Service",
     version="1.0.0",
     lifespan=lifespan,
+)
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_methods=["*"],
+    allow_headers=["*"],
 )
 
 # ── global exception handlers ─────────────────────────────────────────
