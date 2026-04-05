@@ -9,7 +9,7 @@ class BrokerCredential(Base):
     __tablename__ = "broker_credentials"
 
     id          = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
-    broker_name = Column(String, nullable=False, unique=True)  # "groww" | "zerodha" | "upstox"
+    broker_name = Column(String, nullable=False)  # "groww" | "zerodha" | "upstox"
     is_active   = Column(Boolean, default=False, nullable=False)
     credentials = Column(JSONB, nullable=False)               # broker-specific fields as JSON
     created_at  = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
