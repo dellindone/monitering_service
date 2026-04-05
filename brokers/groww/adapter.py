@@ -25,12 +25,13 @@ class GrowwAdapter(BrokerRestAdapter):
         product: Product,
         price: float = 0.0
     ) -> dict:
+        exchange = self._client.EXCHANGE_BSE if symbol.upper().startswith("SENSEX") else self._client.EXCHANGE_NSE
         try:
             response = self._client.place_order(
                 trading_symbol=symbol,
                 quantity=quantity,
                 validity=self._client.VALIDITY_DAY,
-                exchange=self._client.EXCHANGE_NSE,
+                exchange=exchange,
                 segment=segment.value,
                 product=product.value,
                 order_type=order_type.value,
