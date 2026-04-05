@@ -15,8 +15,10 @@ class Settings(BaseSettings):
     capital_stock_option: float = 25000.0
 
     # Lot size multipliers
-    lot_size_multiplier_index: int = 1
-    lot_size_multiplier_stock: int = 1
+    lot_size_multiplier_nifty:     int = 1
+    lot_size_multiplier_banknifty: int = 1
+    lot_size_multiplier_sensex:    int = 1
+    lot_size_multiplier_stock:     int = 1
 
     # Trailing SL
     sl_percent: float = 5.0

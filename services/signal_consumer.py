@@ -68,11 +68,15 @@ class SignalConsumer:
             return
 
         broker = self._trade_manager._rest_broker
-        multiplier = (
-            self._settings.lot_size_multiplier_stock
-            if signal.category == "STOCK"
-            else self._settings.lot_size_multiplier_index
-        )
+        sym = signal.symbol.upper()
+        if "BANKNIFTY" in sym:
+            multiplier = self._settings.lot_size_multiplier_banknifty
+        elif "NIFTY" in sym:
+            multiplier = self._settings.lot_size_multiplier_nifty
+        elif "SENSEX" in sym:
+            multiplier = self._settings.lot_size_multiplier_sensex
+        else:
+            multiplier = self._settings.lot_size_multiplier_stock
         qty = signal.lot_size * multiplier
 
         if qty <= 0:
