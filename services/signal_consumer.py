@@ -62,6 +62,10 @@ class SignalConsumer:
             self._access_token = data["access_token"]
             logger.info("Access token refreshed")
 
+    def _is_index_symbol(self, sym: str) -> bool:
+        s = sym.upper()
+        return any(s.startswith(idx) for idx in ("NIFTY", "BANKNIFTY", "SENSEX", "MIDCPNIFTY", "FINNIFTY"))
+
     async def _process_signal(self, signal: SignalMessage) -> None:
         if self._risk.is_halted():
             logger.warning(f"Kill switch active — skipping {signal.symbol}")
@@ -81,6 +85,29 @@ class SignalConsumer:
 
         if qty <= 0:
             logger.warning(f"qty=0 for {signal.contract}, skipping")
+            return
+
+        # ── Capital limit check ───────────────────────────────────────
+        is_index   = self._is_index_symbol(sym)
+        cap_limit  = self._settings.capital_index_option if is_index else self._settings.capital_stock_option
+        trade_cost = signal.option_ltp * qty
+
+        async with AsyncSessionFactory() as db:
+            open_trades = await trade_repo.get_open_trades(db)
+
+        capital_used = sum(
+            t.buy_price * t.quantity
+            for t in open_trades
+            if self._is_index_symbol(t.symbol) == is_index
+        )
+        capital_remaining = cap_limit - capital_used
+
+        if trade_cost > capital_remaining:
+            logger.warning(
+                f"Capital limit exceeded for {'index' if is_index else 'stock'} — "
+                f"limit=₹{cap_limit} used=₹{capital_used:.0f} "
+                f"trade_cost=₹{trade_cost:.0f} — skipping {signal.contract}"
+            )
             return
 
         cmd      = BuyCommand(broker=broker, symbol=signal.contract, quantity=qty)
