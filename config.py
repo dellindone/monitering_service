@@ -38,6 +38,10 @@ class Settings(BaseSettings):
     backend_email: str
     backend_password: str
 
+    # Telegram
+    telegram_bot_token: str = ""
+    telegram_chat_id: str   = ""
+
     class Config:
         env_file = ENV_FILE
         env_file_encoding = "utf-8"

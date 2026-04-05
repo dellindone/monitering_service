@@ -17,6 +17,7 @@ from risk.daily_risk_manager import DailyRiskManager
 from core.database import AsyncSessionFactory
 from core.logger import get_logger
 from config import get_settings
+import core.telegram as tg
 
 logger = get_logger(__name__)
 
@@ -137,6 +138,7 @@ class SignalConsumer:
             segment   = Segment.FNO,
         )
         logger.info(f"Trade live: {trade.id} | {signal.contract} | qty={qty} | sl={sl_price}")
+        tg.notify_trade_entered(signal.contract, qty, signal.option_ltp, sl_price)
 
     async def _handle_message(self, raw: str) -> None:
         try:

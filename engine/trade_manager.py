@@ -70,11 +70,11 @@ class TradeManager:
             if monitor.symbol == symbol:
                 monitor.on_price_update(symbol, price)
 
-    def _handle_exit(self, trade_id: str, exit_price: float, pnl: float) -> None:
+    def _handle_exit(self, trade_id: str, exit_price: float, pnl: float, symbol: str = "", quantity: int = 0, buy_price: float = 0.0) -> None:
         try:
             self.deregister_trade(trade_id)
             if self._on_trade_closed:
-                self._on_trade_closed(trade_id, exit_price, pnl)
+                self._on_trade_closed(trade_id, exit_price, pnl, symbol, quantity, buy_price)
         except Exception:
             logger.error(traceback.format_exc())
 

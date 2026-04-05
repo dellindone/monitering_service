@@ -81,7 +81,7 @@ class TradeMonitor(PriceObserver):
             self._state.transition(TradeState.CLOSED)
 
             logger.info(f"[{self.trade_id}] Trade closed | pnl={pnl}")
-            self._on_exit(self.trade_id, exit_price, pnl)
+            self._on_exit(self.trade_id, exit_price, pnl, self.symbol, self.quantity, self.buy_price)
 
         except Exception:
             logger.error(traceback.format_exc())

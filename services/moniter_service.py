@@ -11,6 +11,7 @@ from risk.daily_risk_manager import DailyRiskManager
 from core.database import AsyncSessionFactory
 from core.logger import get_logger
 from config import get_settings
+import core.telegram as tg
 
 logger = get_logger(__name__)
 
@@ -83,7 +84,7 @@ class MonitorService:
 
     # ── on trade closed callback ──────────────────────────────────────
 
-    async def on_trade_closed(self, trade_id: str, exit_price: float, pnl: float) -> None:
+    async def on_trade_closed(self, trade_id: str, exit_price: float, pnl: float, symbol: str = "", quantity: int = 0, buy_price: float = 0.0) -> None:
         try:
             async with AsyncSessionFactory() as db:
                 await trade_repo.close_trade(db, trade_id, exit_price, pnl)
@@ -91,6 +92,19 @@ class MonitorService:
 
             self._risk.record_trade_close(pnl)
             logger.info(f"Trade closed handled: {trade_id} | pnl={pnl}")
+
+            if symbol:
+                tg.notify_trade_exited(symbol, quantity, buy_price, exit_price, pnl)
+
+            # Daily summary after every close
+            risk_status = self._risk.status()
+            tg.notify_daily_summary(
+                date         = risk_status["date"],
+                daily_pnl    = risk_status["realized_pnl"],
+                trade_count  = risk_status["trade_count"],
+                halted       = risk_status["halted"],
+                halted_reason= risk_status["halted_reason"],
+            )
         except Exception:
             logger.error(traceback.format_exc())
 

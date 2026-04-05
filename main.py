@@ -18,6 +18,7 @@ from models.trade import Base
 from models.broker_credentials import BrokerCredential
 from config import get_settings
 from core.logger import get_logger
+import core.telegram as tg
 
 logger   = get_logger(__name__)
 settings = get_settings()
@@ -26,6 +27,7 @@ settings = get_settings()
 async def _startup():
     """Heavy startup — runs in background so health check passes immediately."""
     logger.info("Starting Monitoring Service...")
+    tg.configure(settings.telegram_bot_token, settings.telegram_chat_id)
 
     # Create DB tables
     async with engine.begin() as conn:
