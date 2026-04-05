@@ -31,6 +31,11 @@ class TradeRepository:
         result = await db.execute(query)
         return result.scalars().all()
 
+    async def update_trade(self, db: AsyncSession, trade_id: str, data: dict) -> None:
+        data["updated_at"] = datetime.now(timezone.utc)
+        await db.execute(update(Trade).where(Trade.id == trade_id).values(**data))
+        await db.commit()
+
     async def update_sl(self, db: AsyncSession, trade_id: str, sl_price: float) -> None:
         await db.execute(
             update(Trade)

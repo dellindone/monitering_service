@@ -1,7 +1,8 @@
-from fastapi import APIRouter, Depends, Query
+from fastapi import APIRouter, Depends, Query, HTTPException
 from sqlalchemy.ext.asyncio import AsyncSession
 from core.database import get_db
 from repository.trade_repository import trade_repo
+from engine.trade_manager import TradeManager
 from engine.trade_state import TradeState
 from core.logger import get_logger
 
@@ -41,6 +42,24 @@ async def get_trade(trade_id: str, db: AsyncSession = Depends(get_db)):
     if not trade:
         raise TradeNotFoundError(trade_id)
     return _serialize(trade)
+
+
+@router.post("/{trade_id}/pause")
+async def pause_trade(trade_id: str):
+    try:
+        TradeManager().pause_trade(trade_id)
+        return {"message": "Trade monitoring paused"}
+    except ValueError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+
+
+@router.post("/{trade_id}/resume")
+async def resume_trade(trade_id: str):
+    try:
+        TradeManager().resume_trade(trade_id)
+        return {"message": "Trade monitoring resumed"}
+    except ValueError as e:
+        raise HTTPException(status_code=404, detail=str(e))
 
 
 def _serialize(trade) -> dict:

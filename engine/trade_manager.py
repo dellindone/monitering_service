@@ -78,5 +78,22 @@ class TradeManager:
         except Exception:
             logger.error(traceback.format_exc())
 
+    def pause_trade(self, trade_id: str) -> None:
+        if trade_id not in self._monitors:
+            raise ValueError(f"Trade {trade_id} not being monitored")
+        self._monitors[trade_id].paused = True
+        logger.info(f"Trade monitoring paused: {trade_id}")
+
+    def resume_trade(self, trade_id: str) -> None:
+        if trade_id not in self._monitors:
+            raise ValueError(f"Trade {trade_id} not being monitored")
+        self._monitors[trade_id].paused = False
+        logger.info(f"Trade monitoring resumed: {trade_id}")
+
+    def update_quantity(self, trade_id: str, quantity: int) -> None:
+        if trade_id in self._monitors:
+            self._monitors[trade_id].quantity = quantity
+            logger.info(f"Trade qty updated in monitor: {trade_id} | qty={quantity}")
+
     def get_open_trades(self) -> list[str]:
         return list(self._monitors.keys())

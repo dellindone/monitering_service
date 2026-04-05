@@ -142,8 +142,8 @@ class MonitorService:
             logger.debug(f"Raw positions from broker: {positions}")
 
             async with AsyncSessionFactory() as db:
-                open_trades   = await trade_repo.get_open_trades(db)
-                known_symbols = {t.symbol for t in open_trades}
+                open_trades    = await trade_repo.get_open_trades(db)
+                known_trade_map = {t.symbol: t for t in open_trades}
 
                 strategy = TrailingStoplossStrategy()
                 for pos in positions:
@@ -156,11 +156,19 @@ class MonitorService:
 
                     if not symbol or qty <= 0:
                         continue
-                    if symbol in known_symbols:
-                        continue
 
                     buy_price = float(pos.get("net_price", 0))
-                    sl_price  = strategy.initial_sl(buy_price)
+
+                    if symbol in known_trade_map:
+                        # Check if qty changed (manual lots added)
+                        existing = known_trade_map[symbol]
+                        if int(qty) != int(existing.quantity):
+                            await trade_repo.update_trade(db, str(existing.id), {"quantity": qty})
+                            self._trade_manager.update_quantity(str(existing.id), qty)
+                            logger.info(f"Trade qty updated: {symbol} {existing.quantity} → {qty}")
+                        continue
+
+                    sl_price = strategy.initial_sl(buy_price)
 
                     trade = await trade_repo.create_trade(db, {
                         "symbol":    symbol,

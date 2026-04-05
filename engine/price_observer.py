@@ -39,9 +39,13 @@ class TradeMonitor(PriceObserver):
         self._strategy     = strategy
         self._state        = state_machine
         self._on_exit      = on_exit
+        self.paused        = False
 
     def on_price_update(self, symbol: str, price: float) -> None:
         if symbol != self.symbol:
+            return
+
+        if self.paused:
             return
 
         if self._state.is_terminal():
