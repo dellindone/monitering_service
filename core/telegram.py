@@ -36,7 +36,7 @@ def notify_trade_entered(symbol: str, quantity: int, buy_price: float, sl_price:
     )
 
 
-def notify_trade_exited(symbol: str, quantity: int, buy_price: float, exit_price: float, pnl: float) -> None:
+def notify_trade_exited(symbol: str, quantity: int, buy_price: float, exit_price: float, pnl: float, close_reason: str = "SL Hit") -> None:
     emoji = "🟢" if pnl >= 0 else "🔴"
     _send(
         f"{emoji} <b>Trade Exited</b>\n"
@@ -44,7 +44,8 @@ def notify_trade_exited(symbol: str, quantity: int, buy_price: float, exit_price
         f"Qty       : {quantity}\n"
         f"Buy Price : ₹{buy_price:.2f}\n"
         f"Exit Price: ₹{exit_price:.2f}\n"
-        f"P&amp;L       : ₹{pnl:+,.2f}"
+        f"P&amp;L       : ₹{pnl:+,.2f}\n"
+        f"Closed By : {close_reason}"
     )
 
 

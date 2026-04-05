@@ -84,7 +84,7 @@ class MonitorService:
 
     # ── on trade closed callback ──────────────────────────────────────
 
-    async def on_trade_closed(self, trade_id: str, exit_price: float, pnl: float, symbol: str = "", quantity: int = 0, buy_price: float = 0.0) -> None:
+    async def on_trade_closed(self, trade_id: str, exit_price: float, pnl: float, symbol: str = "", quantity: int = 0, buy_price: float = 0.0, close_reason: str = "SL Hit") -> None:
         try:
             async with AsyncSessionFactory() as db:
                 await trade_repo.close_trade(db, trade_id, exit_price, pnl)
@@ -94,7 +94,7 @@ class MonitorService:
             logger.info(f"Trade closed handled: {trade_id} | pnl={pnl}")
 
             if symbol:
-                tg.notify_trade_exited(symbol, quantity, buy_price, exit_price, pnl)
+                tg.notify_trade_exited(symbol, quantity, buy_price, exit_price, pnl, close_reason=close_reason)
 
             # Daily summary after every close
             risk_status = self._risk.status()
@@ -150,17 +150,18 @@ class MonitorService:
         try:
             broker    = self._trade_manager._rest_broker
             positions = broker.get_positions()
-            if not positions:
-                return
 
             logger.debug(f"Raw positions from broker: {positions}")
 
             async with AsyncSessionFactory() as db:
-                open_trades    = await trade_repo.get_open_trades(db)
+                open_trades     = await trade_repo.get_open_trades(db)
                 known_trade_map = {t.symbol: t for t in open_trades}
 
+                # symbols currently open at broker (qty > 0)
+                broker_symbols = set()
                 strategy = TrailingStoplossStrategy()
-                for pos in positions:
+
+                for pos in (positions or []):
                     if not isinstance(pos, dict):
                         logger.warning(f"Unexpected position format: {type(pos)} | {pos}")
                         continue
@@ -171,6 +172,7 @@ class MonitorService:
                     if not symbol or qty <= 0:
                         continue
 
+                    broker_symbols.add(symbol)
                     buy_price = float(pos.get("net_price", 0))
 
                     if symbol in known_trade_map:
@@ -183,7 +185,6 @@ class MonitorService:
                         continue
 
                     sl_price = strategy.initial_sl(buy_price)
-
                     trade = await trade_repo.create_trade(db, {
                         "symbol":    symbol,
                         "quantity":  qty,
@@ -192,7 +193,6 @@ class MonitorService:
                         "state":     "OPEN",
                         "source":    "EXTERNAL",
                     })
-
                     self._trade_manager.register_trade(
                         trade_id  = str(trade.id),
                         symbol    = symbol,
@@ -202,6 +202,40 @@ class MonitorService:
                         segment   = Segment.FNO,
                     )
                     logger.info(f"External trade detected: {symbol} qty={qty} buy={buy_price}")
+
+                # ── Detect manually closed positions ──────────────────
+                for symbol, trade in known_trade_map.items():
+                    if symbol in broker_symbols:
+                        continue  # still open at broker
+
+                    # Position gone from broker — manually closed from UI
+                    try:
+                        exchange   = "BSE" if symbol.upper().startswith("SENSEX") else "NSE"
+                        exit_price = broker.get_ltp(symbol, Segment.FNO, exchange)
+                    except Exception:
+                        exit_price = trade.buy_price  # fallback if LTP unavailable
+
+                    pnl = round((exit_price - trade.buy_price) * trade.quantity, 2)
+
+                    await trade_repo.update_trade(db, str(trade.id), {
+                        "state":         "CLOSED",
+                        "current_price": exit_price,
+                        "pnl":           pnl,
+                        "source":        "MANUAL_CLOSE",
+                    })
+                    await trade_repo.update_daily_stat(db, pnl)
+                    self._trade_manager.deregister_trade(str(trade.id))
+                    self._risk.record_trade_close(pnl)
+
+                    logger.info(f"Manual close detected: {symbol} | exit≈{exit_price} | pnl={pnl}")
+                    tg.notify_trade_exited(
+                        symbol       = symbol,
+                        quantity     = int(trade.quantity),
+                        buy_price    = trade.buy_price,
+                        exit_price   = exit_price,
+                        pnl          = pnl,
+                        close_reason = "Manually closed from Broker UI",
+                    )
 
         except Exception:
             logger.error(traceback.format_exc())
