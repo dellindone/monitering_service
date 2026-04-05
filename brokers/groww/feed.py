@@ -1,4 +1,3 @@
-import asyncio
 import traceback
 import threading
 from growwapi import GrowwFeed as _GrowwFeed
@@ -15,6 +14,7 @@ class GrowwFeed(BrokerFeedAdapter):
         self._subscribe: list[str] = []
         self._callback = None
         self._thread: threading.Thread = None
+        self._token_to_symbol: dict[str, str] = {}  # exchange_token -> trading_symbol
 
     def connect(self):
         """Run GrowwFeed instantiation in a separate thread.
@@ -49,16 +49,48 @@ class GrowwFeed(BrokerFeedAdapter):
         self._callback = callback
         self._subscribe.extend(symbols)
 
+        # Resolve each trading symbol to the dict format Groww expects:
+        # {"exchange": "NSE", "segment": "FNO", "exchange_token": "35100"}
+        client = self._auth.get_client()
+        instrument_list = []
+        for sym in symbols:
+            try:
+                try:
+                    inst = client.get_instrument_by_exchange_and_trading_symbol("NSE", sym)
+                except Exception:
+                    inst = client.get_instrument_by_exchange_and_trading_symbol("BSE", sym)
+                token = str(inst["exchange_token"])
+                instrument_list.append({
+                    "exchange":       inst["exchange"],
+                    "segment":        inst["segment"],
+                    "exchange_token": token,
+                })
+                self._token_to_symbol[token] = sym
+                logger.info(f"Resolved instrument: {sym} → token={token} exchange={inst['exchange']} segment={inst['segment']}")
+            except Exception:
+                logger.error(f"Could not resolve instrument for symbol '{sym}': {traceback.format_exc()}")
+
+        if not instrument_list:
+            logger.error(f"No valid instruments found for symbols: {symbols}")
+            return
+
         def on_tick(meta):
             try:
+                # get_ltp() returns {exchange: {segment: {exchange_token: price_data}}}
                 data = self._feed.get_ltp()
-                for symbol, price in data.items():
-                    callback(symbol, price)
+                for _exchange, segs in data.items():
+                    for _segment, tokens in segs.items():
+                        for token, price_data in tokens.items():
+                            sym = self._token_to_symbol.get(str(token))
+                            if sym and price_data:
+                                ltp = price_data.get("ltp")
+                                if ltp is not None:
+                                    callback(sym, float(ltp))
             except Exception:
                 logger.error(traceback.format_exc())
-        
-        self._feed.subscribe_ltp(symbols, on_data_received=on_tick)
-        logger.info(f"Subscribed to symbol: {symbols}")
+
+        self._feed.subscribe_ltp(instrument_list, on_data_received=on_tick)
+        logger.info(f"Subscribed to symbols: {symbols}")
     
     def start(self) -> None:
         self._thread = threading.Thread(target=self._feed.consume, daemon=True)
