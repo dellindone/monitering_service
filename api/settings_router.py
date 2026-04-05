@@ -14,6 +14,8 @@ class SettingsUpdate(BaseModel):
     daily_target: float | None = None
     capital_index_option: float | None = None
     capital_stock_option: float | None = None
+    lot_size_multiplier_index: int | None = None
+    lot_size_multiplier_stock: int | None = None
 
 
 @router.get("")
@@ -24,8 +26,10 @@ async def get_settings_view():
         "trailing_step":        s.trailing_step,
         "daily_loss_limit":     s.daily_loss_limit,
         "daily_target":         s.daily_target,
-        "capital_index_option": s.capital_index_option,
-        "capital_stock_option": s.capital_stock_option,
+        "capital_index_option":      s.capital_index_option,
+        "capital_stock_option":      s.capital_stock_option,
+        "lot_size_multiplier_index": s.lot_size_multiplier_index,
+        "lot_size_multiplier_stock": s.lot_size_multiplier_stock,
     }
 
 
@@ -44,6 +48,10 @@ async def update_settings(body: SettingsUpdate):
         s.capital_index_option = body.capital_index_option
     if body.capital_stock_option is not None:
         s.capital_stock_option = body.capital_stock_option
+    if body.lot_size_multiplier_index is not None:
+        s.lot_size_multiplier_index = max(1, body.lot_size_multiplier_index)
+    if body.lot_size_multiplier_stock is not None:
+        s.lot_size_multiplier_stock = max(1, body.lot_size_multiplier_stock)
 
     logger.info(f"Settings updated: {body.model_dump(exclude_none=True)}")
     return {"message": "Settings updated", "settings": {

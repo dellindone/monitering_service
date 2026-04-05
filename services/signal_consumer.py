@@ -68,7 +68,12 @@ class SignalConsumer:
             return
 
         broker = self._trade_manager._rest_broker
-        qty    = floor(signal.investment / signal.option_ltp)
+        multiplier = (
+            self._settings.lot_size_multiplier_stock
+            if signal.category == "STOCK"
+            else self._settings.lot_size_multiplier_index
+        )
+        qty = signal.lot_size * multiplier
 
         if qty <= 0:
             logger.warning(f"qty=0 for {signal.contract}, skipping")
