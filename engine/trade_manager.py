@@ -18,7 +18,8 @@ class TradeManager:
             cls._instance._monitors: dict[str, TradeMonitor] = {}
             cls._instance._rest_broker: BrokerRestAdapter = None
             cls._instance._feed_broker: BrokerFeedAdapter = None
-            cls._instance._on_trade_closed = None  # callback(trade_id, exit_price, pnl)
+            cls._instance._on_trade_closed = None
+            cls._instance._loop = None
         return cls._instance
 
     def initialise(
@@ -27,9 +28,11 @@ class TradeManager:
         feed_broker: BrokerFeedAdapter,
         on_trade_closed,
     ) -> None:
+        import asyncio
         self._rest_broker     = rest_broker
         self._feed_broker     = feed_broker
         self._on_trade_closed = on_trade_closed
+        self._loop            = asyncio.get_event_loop()
         logger.info("TradeManager initialised")
 
     def register_trade(
@@ -74,11 +77,10 @@ class TradeManager:
         import asyncio
         try:
             self.deregister_trade(trade_id)
-            if self._on_trade_closed:
-                loop = asyncio.get_event_loop()
+            if self._on_trade_closed and self._loop:
                 asyncio.run_coroutine_threadsafe(
                     self._on_trade_closed(trade_id, exit_price, pnl, symbol, quantity, buy_price, close_reason),
-                    loop,
+                    self._loop,
                 )
         except Exception:
             logger.error(traceback.format_exc())
