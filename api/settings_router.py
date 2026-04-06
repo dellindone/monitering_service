@@ -2,14 +2,13 @@ from fastapi import APIRouter
 from pydantic import BaseModel
 from config import get_settings
 from core.logger import get_logger
+from core.vix_tracker import vix_tracker
 
 logger = get_logger(__name__)
 router = APIRouter(prefix="/settings", tags=["Settings"])
 
 
 class SettingsUpdate(BaseModel):
-    sl_percent: float | None = None
-    trailing_step: float | None = None
     daily_loss_limit: float | None = None
     daily_target: float | None = None
     capital_index_option: float | None = None
@@ -23,9 +22,8 @@ class SettingsUpdate(BaseModel):
 @router.get("")
 async def get_settings_view():
     s = get_settings()
+    sl_params = vix_tracker.get_sl_params()
     return {
-        "sl_percent":           s.sl_percent,
-        "trailing_step":        s.trailing_step,
         "daily_loss_limit":     s.daily_loss_limit,
         "daily_target":         s.daily_target,
         "capital_index_option":          s.capital_index_option,
@@ -34,16 +32,19 @@ async def get_settings_view():
         "lot_size_multiplier_banknifty": s.lot_size_multiplier_banknifty,
         "lot_size_multiplier_sensex":    s.lot_size_multiplier_sensex,
         "lot_size_multiplier_stock":     s.lot_size_multiplier_stock,
+        "vix_adaptive_sl": {
+            "current_vix": vix_tracker.get_current_vix(),
+            "sl_points": sl_params.sl_points,
+            "trail_min": sl_params.trail_min,
+            "trail_pct": sl_params.trail_pct,
+            "breakeven_pct": sl_params.breakeven_pct,
+        },
     }
 
 
 @router.patch("")
 async def update_settings(body: SettingsUpdate):
     s = get_settings()
-    if body.sl_percent is not None:
-        s.sl_percent = body.sl_percent
-    if body.trailing_step is not None:
-        s.trailing_step = body.trailing_step
     if body.daily_loss_limit is not None:
         s.daily_loss_limit = body.daily_loss_limit
     if body.daily_target is not None:
@@ -62,11 +63,21 @@ async def update_settings(body: SettingsUpdate):
         s.lot_size_multiplier_stock = max(1, body.lot_size_multiplier_stock)
 
     logger.info(f"Settings updated: {body.model_dump(exclude_none=True)}")
+    sl_params = vix_tracker.get_sl_params()
     return {"message": "Settings updated", "settings": {
-        "sl_percent":           s.sl_percent,
-        "trailing_step":        s.trailing_step,
         "daily_loss_limit":     s.daily_loss_limit,
         "daily_target":         s.daily_target,
         "capital_index_option": s.capital_index_option,
         "capital_stock_option": s.capital_stock_option,
+        "lot_size_multiplier_nifty":     s.lot_size_multiplier_nifty,
+        "lot_size_multiplier_banknifty": s.lot_size_multiplier_banknifty,
+        "lot_size_multiplier_sensex":    s.lot_size_multiplier_sensex,
+        "lot_size_multiplier_stock":     s.lot_size_multiplier_stock,
+        "vix_adaptive_sl": {
+            "current_vix": vix_tracker.get_current_vix(),
+            "sl_points": sl_params.sl_points,
+            "trail_min": sl_params.trail_min,
+            "trail_pct": sl_params.trail_pct,
+            "breakeven_pct": sl_params.breakeven_pct,
+        },
     }}
