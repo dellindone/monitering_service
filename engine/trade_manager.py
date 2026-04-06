@@ -75,8 +75,10 @@ class TradeManager:
         try:
             self.deregister_trade(trade_id)
             if self._on_trade_closed:
-                asyncio.create_task(
-                    self._on_trade_closed(trade_id, exit_price, pnl, symbol, quantity, buy_price, close_reason)
+                loop = asyncio.get_event_loop()
+                asyncio.run_coroutine_threadsafe(
+                    self._on_trade_closed(trade_id, exit_price, pnl, symbol, quantity, buy_price, close_reason),
+                    loop,
                 )
         except Exception:
             logger.error(traceback.format_exc())
