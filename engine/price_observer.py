@@ -75,13 +75,30 @@ class TradeMonitor(PriceObserver):
                 symbol=self.symbol,
                 quantity=self.quantity,
             )
-            cmd.execute()
+            response = cmd.execute()
+
+            # Try to get actual executed price from broker order status
+            try:
+                from brokers.base import Segment
+                order_id = response.get("groww_order_id")
+                if order_id:
+                    # Retry up to 3 times with short polling instead of blocking sleep
+                    import time
+                    for _ in range(3):
+                        actual_price = self._broker.get_order_executed_price(order_id, Segment.FNO)
+                        if actual_price:
+                            exit_price = actual_price
+                            logger.info(f"[{self.trade_id}] Actual exit price from order: {exit_price}")
+                            break
+                        time.sleep(0.5)
+            except Exception:
+                logger.warning(f"[{self.trade_id}] Could not fetch actual exit price, using tick price")
 
             pnl = round((exit_price - self.buy_price) * self.quantity, 2)
             self._state.transition(TradeState.CLOSED)
 
             logger.info(f"[{self.trade_id}] Trade closed | pnl={pnl}")
-            self._on_exit(self.trade_id, exit_price, pnl, self.symbol, self.quantity, self.buy_price)
+            self._on_exit(self.trade_id, exit_price, pnl, self.symbol, self.quantity, self.buy_price, "SL Hit")
 
         except Exception:
             logger.error(traceback.format_exc())

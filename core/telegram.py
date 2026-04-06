@@ -1,6 +1,7 @@
 import httpx
 import traceback
 from core.logger import get_logger
+from core.charges import calculate_charges
 
 logger = get_logger(__name__)
 
@@ -38,14 +39,35 @@ def notify_trade_entered(symbol: str, quantity: int, buy_price: float, sl_price:
 
 def notify_trade_exited(symbol: str, quantity: int, buy_price: float, exit_price: float, pnl: float, close_reason: str = "SL Hit") -> None:
     emoji = "🟢" if pnl >= 0 else "🔴"
+    try:
+        c = calculate_charges(symbol, quantity, buy_price, exit_price)
+        net_pnl = pnl - c["total_charges"]
+        net_emoji = "🟢" if net_pnl >= 0 else "🔴"
+        charges_line = (
+            f"\n<b>Charges Breakdown</b>\n"
+            f"  Brokerage : ₹{c['brokerage']:.2f}\n"
+            f"  STT       : ₹{c['stt']:.2f}\n"
+            f"  Exchange  : ₹{c['exchange']:.2f}\n"
+            f"  SEBI      : ₹{c['sebi']:.2f}\n"
+            f"  Stamp Duty: ₹{c['stamp_duty']:.2f}\n"
+            f"  IPFT      : ₹{c['ipft']:.2f}\n"
+            f"  GST       : ₹{c['gst']:.2f}\n"
+            f"  <b>Total     : ₹{c['total_charges']:.2f}</b>\n"
+            f"\n{net_emoji} <b>Net P&amp;L  : ₹{net_pnl:+,.2f}</b>"
+        )
+    except Exception:
+        charges_line = ""
+        net_pnl = pnl
+
     _send(
         f"{emoji} <b>Trade Exited</b>\n"
         f"Symbol    : <code>{symbol}</code>\n"
         f"Qty       : {quantity}\n"
         f"Buy Price : ₹{buy_price:.2f}\n"
         f"Exit Price: ₹{exit_price:.2f}\n"
-        f"P&amp;L       : ₹{pnl:+,.2f}\n"
+        f"Gross P&amp;L  : ₹{pnl:+,.2f}\n"
         f"Closed By : {close_reason}"
+        f"{charges_line}"
     )
 
 

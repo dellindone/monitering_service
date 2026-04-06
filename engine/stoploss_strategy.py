@@ -21,13 +21,11 @@ class TrailingStoplossStrategy(StoplossStrategy):
     def initial_sl(self, buy_price: float) -> float:
         return round(buy_price * (1 - self._sl_pct), 2)
     
-    def update_sl(self,  buy_price: float, current_sl: float, current_price: float):
-        gain = (current_price - buy_price) / buy_price
-        bands_crossed = int(gain / self._step_pct)
-
-        if bands_crossed <= 0:
+    def update_sl(self, buy_price: float, current_sl: float, current_price: float):
+        if current_price <= buy_price:
             return current_sl
 
-        new_sl = round(buy_price * (1 + (bands_crossed - 1) * self._step_pct) * (1 - self._sl_pct), 2)
-        return max(new_sl, current_sl)  # SL only moves up
+        # Trail SL directly from current price — always 5% below current price
+        new_sl = round(current_price * (1 - self._sl_pct), 2)
+        return max(new_sl, current_sl)  # SL only moves up, never down
     

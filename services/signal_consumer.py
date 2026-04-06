@@ -5,7 +5,6 @@ import ssl
 import certifi
 import httpx
 import websockets
-from math import floor
 
 from schemas.signal import SignalMessage
 from engine.trade_manager import TradeManager

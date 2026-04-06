@@ -56,6 +56,12 @@ class BrokerRestAdapter(ABC):
     def get_ltp(self, symbol: str, segment: Segment) -> float:
         ...
 
+    def get_recent_sell_price(self, symbol: str, segment: Segment) -> float | None:
+        return None
+
+    def get_order_executed_price(self, order_id: str, segment: Segment) -> float | None:
+        return None
+
 class BrokerFeedAdapter(ABC):
 
     @abstractmethod

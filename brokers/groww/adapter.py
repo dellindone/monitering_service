@@ -81,6 +81,34 @@ class GrowwAdapter(BrokerRestAdapter):
             logger.error(traceback.format_exc())
             raise BrokerNetworkError(f"get_positions failed: {e}")
     
+    def get_order_executed_price(self, order_id: str, segment: Segment) -> float | None:
+        try:
+            status = self._client.get_order_status(segment=segment.value, groww_order_id=order_id)
+            price = status.get("average_price") or status.get("avg_price")
+            if price:
+                return float(price)
+        except Exception:
+            logger.error(traceback.format_exc())
+        return None
+
+    def get_recent_sell_price(self, symbol: str, segment: Segment) -> float | None:
+        """Look up the most recent executed SELL order price for a symbol."""
+        try:
+            result = self._client.get_order_list(segment=segment.value, page_size=50)
+            orders = result.get("orders", result.get("orderBook", []))
+            for order in orders:
+                if (
+                    order.get("trading_symbol") == symbol
+                    and order.get("transaction_type", "").upper() == "SELL"
+                    and order.get("order_status", "").upper() in ("COMPLETE", "TRADED", "EXECUTED")
+                ):
+                    price = order.get("average_price") or order.get("avg_price") or order.get("price")
+                    if price:
+                        return float(price)
+        except Exception:
+            logger.error(traceback.format_exc())
+        return None
+
     def get_ltp(self, symbol: str, segment: Segment, exchange: str) -> float:
         try:
             key = f"{exchange}_{symbol}"

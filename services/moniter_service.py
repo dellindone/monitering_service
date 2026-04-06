@@ -208,12 +208,23 @@ class MonitorService:
                     if symbol in broker_symbols:
                         continue  # still open at broker
 
+                    # Skip if already being handled by SL monitor (still in memory)
+                    if str(trade.id) in self._trade_manager._monitors:
+                        continue
+
                     # Position gone from broker — manually closed from UI
+                    # Try to get actual executed sell price from order history
+                    exit_price = None
                     try:
-                        exchange   = "BSE" if symbol.upper().startswith("SENSEX") else "NSE"
-                        exit_price = broker.get_ltp(symbol, Segment.FNO, exchange)
+                        exit_price = broker.get_recent_sell_price(symbol, Segment.FNO)
                     except Exception:
-                        exit_price = trade.buy_price  # fallback if LTP unavailable
+                        pass
+                    if not exit_price:
+                        try:
+                            exchange   = "BSE" if symbol.upper().startswith("SENSEX") else "NSE"
+                            exit_price = broker.get_ltp(symbol, Segment.FNO, exchange)
+                        except Exception:
+                            exit_price = trade.buy_price  # last fallback
 
                     pnl = round((exit_price - trade.buy_price) * trade.quantity, 2)
 
