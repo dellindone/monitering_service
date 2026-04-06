@@ -114,15 +114,13 @@ class SignalConsumer:
         response = cmd.execute()
         order_id = response.get("groww_order_id")
 
-        # Fetch actual executed buy price from broker
+        # Fetch actual executed buy price from broker positions
         buy_price = signal.option_ltp  # fallback
-        if order_id:
-            import asyncio
-            await asyncio.sleep(1)  # brief wait for order to fill
-            actual = broker.get_order_executed_price(order_id, Segment.FNO)
-            if actual:
-                buy_price = actual
-                logger.info(f"Actual buy price from order: {buy_price} (signal ltp was {signal.option_ltp})")
+        await asyncio.sleep(1)  # brief wait for order to fill
+        actual = broker.get_position_buy_price(signal.contract, Segment.FNO)
+        if actual:
+            buy_price = actual
+            logger.info(f"Actual buy price from position: {buy_price} (signal ltp was {signal.option_ltp})")
 
         strategy = TrailingStoplossStrategy()
         sl_price = strategy.initial_sl(buy_price)

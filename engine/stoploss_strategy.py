@@ -22,10 +22,18 @@ class TrailingStoplossStrategy(StoplossStrategy):
         return round(buy_price * (1 - self._sl_pct), 2)
     
     def update_sl(self, buy_price: float, current_sl: float, current_price: float):
-        if current_price <= buy_price:
+        gain = (current_price - buy_price) / buy_price
+        bands_crossed = int(gain / self._step_pct)
+
+        if bands_crossed <= 0:
             return current_sl
 
-        # Trail SL directly from current price — always 5% below current price
-        new_sl = round(current_price * (1 - self._sl_pct), 2)
-        return max(new_sl, current_sl)  # SL only moves up, never down
+        # SL sits 5% below the last completed band level
+        # e.g. buy=100, step=5%: band1=105, band2=110, band3=115...
+        # at band1: SL = 105 * 0.95 = 99.75 (just under buy, protecting capital)
+        # at band2: SL = 110 * 0.95 = 104.50
+        # at band3: SL = 115 * 0.95 = 109.25
+        band_price = buy_price * (1 + bands_crossed * self._step_pct)
+        new_sl = round(band_price * (1 - self._sl_pct), 2)
+        return max(new_sl, current_sl)  # never moves down
     

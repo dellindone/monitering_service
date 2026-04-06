@@ -81,6 +81,19 @@ class GrowwAdapter(BrokerRestAdapter):
             logger.error(traceback.format_exc())
             raise BrokerNetworkError(f"get_positions failed: {e}")
     
+    def get_position_buy_price(self, symbol: str, segment: Segment) -> float | None:
+        """Get actual average buy price from broker positions for a symbol."""
+        try:
+            result = self._client.get_position_for_trading_symbol(
+                trading_symbol=symbol, segment=segment.value
+            )
+            price = result.get("net_price") or result.get("average_price") or result.get("avg_price")
+            if price:
+                return float(price)
+        except Exception:
+            logger.error(traceback.format_exc())
+        return None
+
     def get_order_executed_price(self, order_id: str, segment: Segment) -> float | None:
         try:
             status = self._client.get_order_status(segment=segment.value, groww_order_id=order_id)
