@@ -114,14 +114,24 @@ class SignalConsumer:
         response = cmd.execute()
         order_id = response.get("groww_order_id")
 
+        # Fetch actual executed buy price from broker
+        buy_price = signal.option_ltp  # fallback
+        if order_id:
+            import asyncio
+            await asyncio.sleep(1)  # brief wait for order to fill
+            actual = broker.get_order_executed_price(order_id, Segment.FNO)
+            if actual:
+                buy_price = actual
+                logger.info(f"Actual buy price from order: {buy_price} (signal ltp was {signal.option_ltp})")
+
         strategy = TrailingStoplossStrategy()
-        sl_price = strategy.initial_sl(signal.option_ltp)
+        sl_price = strategy.initial_sl(buy_price)
 
         async with AsyncSessionFactory() as db:
             trade = await trade_repo.create_trade(db, {
                 "symbol":          signal.contract,
                 "quantity":        qty,
-                "buy_price":       signal.option_ltp,
+                "buy_price":       buy_price,
                 "sl_price":        sl_price,
                 "state":           "OPEN",
                 "source":          "WEBSOCKET",
@@ -132,12 +142,12 @@ class SignalConsumer:
             trade_id  = str(trade.id),
             symbol    = signal.contract,
             quantity  = qty,
-            buy_price = signal.option_ltp,
+            buy_price = buy_price,
             sl_price  = sl_price,
             segment   = Segment.FNO,
         )
-        logger.info(f"Trade live: {trade.id} | {signal.contract} | qty={qty} | sl={sl_price}")
-        tg.notify_trade_entered(signal.contract, qty, signal.option_ltp, sl_price)
+        logger.info(f"Trade live: {trade.id} | {signal.contract} | qty={qty} | buy={buy_price} | sl={sl_price}")
+        tg.notify_trade_entered(signal.contract, qty, buy_price, sl_price)
 
     async def _handle_message(self, raw: str) -> None:
         try:
