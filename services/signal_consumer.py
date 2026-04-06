@@ -114,16 +114,26 @@ class SignalConsumer:
         response = cmd.execute()
         order_id = response.get("groww_order_id")
 
-        # Fetch actual executed buy price from order status
+        # Fetch actual executed buy price from this specific order's trade list
         buy_price = signal.option_ltp  # fallback
+        logger.info(f"Order ID from place_order response: {order_id}")
         if order_id:
-            for _ in range(5):
+            for attempt in range(6):
                 await asyncio.sleep(0.5)
                 actual = broker.get_order_executed_price(order_id, Segment.FNO)
+                logger.info(f"Attempt {attempt+1} — get_order_executed_price returned: {actual}")
                 if actual:
                     buy_price = actual
-                    logger.info(f"Actual buy price from order: {buy_price} (signal ltp was {signal.option_ltp})")
+                    logger.info(f"Actual buy price from order trade list: {buy_price} (signal ltp was {signal.option_ltp})")
                     break
+            else:
+                # Exhausted retries — check if order was rejected/failed
+                status = broker.get_order_status(order_id, Segment.FNO)
+                if status in broker._FAILED_STATUSES:
+                    logger.warning(f"Order {order_id} was {status} — not creating trade for {signal.contract}")
+                    return
+        else:
+            logger.warning("No order_id returned from place_order — using signal ltp as buy price")
 
         strategy = TrailingStoplossStrategy()
         sl_price = strategy.initial_sl(buy_price)

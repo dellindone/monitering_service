@@ -1,6 +1,6 @@
 from datetime import datetime, timezone
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select, update
+from sqlalchemy import select, update, func
 from models.trade import Trade, DailyStat
 from engine.trade_state import TradeState
 from core.logger import get_logger
@@ -61,6 +61,16 @@ class TradeRepository:
     async def get_open_trades(self, db: AsyncSession) -> list[Trade]:
         return await self.get_all_trades(db, state=TradeState.OPEN)
 
+    async def get_today_closed_trades(self, db: AsyncSession) -> list[Trade]:
+        today = datetime.now(timezone.utc).date()
+        result = await db.execute(
+            select(Trade).where(
+                Trade.state == TradeState.CLOSED,
+                func.date(Trade.updated_at) == today,
+            ).order_by(Trade.updated_at)
+        )
+        return result.scalars().all()
+
     # ── daily stats ───────────────────────────────────────────────────
 
     async def get_or_create_daily_stat(self, db: AsyncSession) -> DailyStat:
@@ -81,6 +91,16 @@ class TradeRepository:
         stat.updated_at    = datetime.now(timezone.utc)
         await db.commit()
         logger.info(f"Daily stat updated: pnl={pnl} | total={stat.realized_pnl}")
+
+    async def is_summary_sent(self, db: AsyncSession) -> bool:
+        stat = await self.get_or_create_daily_stat(db)
+        return stat.summary_sent == "true"
+
+    async def mark_summary_sent(self, db: AsyncSession) -> None:
+        stat = await self.get_or_create_daily_stat(db)
+        stat.summary_sent = "true"
+        stat.updated_at   = datetime.now(timezone.utc)
+        await db.commit()
 
 
 trade_repo = TradeRepository()

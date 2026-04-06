@@ -82,46 +82,85 @@ class GrowwAdapter(BrokerRestAdapter):
             raise BrokerNetworkError(f"get_positions failed: {e}")
     
     def get_position_buy_price(self, symbol: str, segment: Segment) -> float | None:
-        """Get actual average buy price from broker positions for a symbol."""
+        """Get actual today's buy price from broker positions for a symbol."""
         try:
             result = self._client.get_position_for_trading_symbol(
                 trading_symbol=symbol, segment=segment.value
             )
-            price = result.get("net_price") or result.get("average_price") or result.get("avg_price")
-            if price:
+            logger.info(f"Position for {symbol}: {result}")
+            # credit_price = today's actual buy price (not blended with carry forward)
+            price = result.get("credit_price") or result.get("net_price")
+            if price and float(price) > 0:
                 return float(price)
+        except Exception:
+            logger.error(traceback.format_exc())
+        return None
+
+    _FILLED_STATUSES  = {"EXECUTED", "COMPLETED"}
+    _FAILED_STATUSES  = {"REJECTED", "FAILED", "CANCELLED"}
+
+    def get_order_status(self, order_id: str, segment: Segment) -> str | None:
+        """Return the current order_status string for a given order_id, or None if not found."""
+        try:
+            result = self._client.get_order_list(segment=segment.value, page_size=50)
+            for order in result.get("order_list", []):
+                if order.get("groww_order_id") == order_id:
+                    status = order.get("order_status", "").upper()
+                    remark = order.get("remark", "")
+                    logger.info(f"Order {order_id} status={status} remark={remark}")
+                    return status
         except Exception:
             logger.error(traceback.format_exc())
         return None
 
     def get_order_executed_price(self, order_id: str, segment: Segment) -> float | None:
         try:
-            result = self._client.get_trade_list_for_order(
-                groww_order_id=order_id, segment=segment.value
-            )
-            logger.info(f"Trade list for order {order_id}: {result}")
-            trades = result.get("trades", result.get("trade_list", []))
-            if trades:
-                # First trade = actual fill price
-                price = trades[0].get("price") or trades[0].get("trade_price") or trades[0].get("traded_price")
-                if price and float(price) > 0:
-                    return float(price)
+            result = self._client.get_order_list(segment=segment.value, page_size=50)
+            orders = result.get("order_list", [])
+            for order in orders:
+                if (
+                    order.get("groww_order_id") == order_id
+                    and order.get("order_status", "").upper() in self._FILLED_STATUSES
+                ):
+                    price = order.get("average_fill_price")
+                    if price and float(price) > 0:
+                        logger.info(f"Actual fill price for {order_id}: {price}")
+                        return float(price)
+        except Exception:
+            logger.error(f"get_order_executed_price failed for {order_id}: {traceback.format_exc()}")
+        return None
+
+    def get_latest_buy_order(self, symbol: str, segment: Segment) -> tuple[float, str] | tuple[None, None]:
+        """Return (average_fill_price, groww_order_id) of the most recent EXECUTED BUY for a symbol."""
+        try:
+            result = self._client.get_order_list(segment=segment.value, page_size=50)
+            for order in result.get("order_list", []):
+                if (
+                    order.get("trading_symbol") == symbol
+                    and order.get("transaction_type", "").upper() == "BUY"
+                    and order.get("order_status", "").upper() in self._FILLED_STATUSES
+                ):
+                    price    = order.get("average_fill_price")
+                    order_id = order.get("groww_order_id")
+                    if price and float(price) > 0:
+                        logger.info(f"Latest buy order for {symbol}: price={price} order_id={order_id}")
+                        return float(price), order_id
         except Exception:
             logger.error(traceback.format_exc())
-        return None
+        return None, None
 
     def get_recent_sell_price(self, symbol: str, segment: Segment) -> float | None:
         """Look up the most recent executed SELL order price for a symbol."""
         try:
             result = self._client.get_order_list(segment=segment.value, page_size=50)
-            orders = result.get("orders", result.get("orderBook", []))
+            orders = result.get("order_list", [])
             for order in orders:
                 if (
                     order.get("trading_symbol") == symbol
                     and order.get("transaction_type", "").upper() == "SELL"
-                    and order.get("order_status", "").upper() in ("COMPLETE", "TRADED", "EXECUTED")
+                    and order.get("order_status", "").upper() in self._FILLED_STATUSES
                 ):
-                    price = order.get("average_price") or order.get("avg_price") or order.get("price")
+                    price = order.get("average_fill_price") or order.get("average_price") or order.get("price")
                     if price:
                         return float(price)
         except Exception:

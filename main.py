@@ -1,5 +1,7 @@
 import asyncio
 from contextlib import asynccontextmanager
+from datetime import datetime, timezone, timedelta
+from zoneinfo import ZoneInfo
 from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
@@ -11,11 +13,13 @@ from api.trades_router import router as trades_router
 from api.killswitch_router import router as killswitch_router
 from api.credentials_router import router as credentials_router
 from api.settings_router import router as settings_router
-from core.database import engine
+from core.database import engine, AsyncSessionFactory
 from core.exceptions import AppException, BrokerException
 from core.credential_manager import credential_manager
 from models.trade import Base
 from models.broker_credentials import BrokerCredential
+from repository.trade_repository import trade_repo
+from risk.daily_risk_manager import DailyRiskManager
 from config import get_settings
 from core.logger import get_logger
 import core.telegram as tg
@@ -47,6 +51,7 @@ async def _startup():
     # Start monitor service + signal consumer
     await monitor_service.start(rest_broker, feed_broker)
     asyncio.create_task(signal_consumer.start())
+    asyncio.create_task(_eod_summary_loop())
 
     logger.info("Monitoring Service fully started")
 
@@ -64,6 +69,65 @@ async def lifespan(app: FastAPI):
     await monitor_service.stop()
     await engine.dispose()
     logger.info("Shutdown complete")
+
+
+_IST = ZoneInfo("Asia/Kolkata")
+_EOD_HOUR, _EOD_MINUTE = 15, 35
+
+
+async def _send_eod_summary() -> None:
+    async with AsyncSessionFactory() as db:
+        already_sent = await trade_repo.is_summary_sent(db)
+        if already_sent:
+            logger.info("EOD summary already sent today — skipping")
+            return
+        closed_trades = await trade_repo.get_today_closed_trades(db)
+        open_trades   = await trade_repo.get_open_trades(db)
+
+    risk        = DailyRiskManager()
+    risk_status = risk.status()
+    date_str    = datetime.now(_IST).strftime("%d %b %Y")
+
+    tg.notify_eod_summary(
+        date          = date_str,
+        closed_trades = closed_trades,
+        open_trades   = open_trades,
+        daily_pnl     = risk_status["realized_pnl"],
+        halted        = risk_status["halted"],
+        halted_reason = risk_status["halted_reason"],
+    )
+
+    async with AsyncSessionFactory() as db:
+        await trade_repo.mark_summary_sent(db)
+    logger.info("EOD summary sent and marked in DB")
+
+
+async def _eod_summary_loop() -> None:
+    """Fires at 15:35 IST. On startup, catches up if past 15:35 and summary not yet sent."""
+    logger.info("EOD summary scheduler started")
+    while True:
+        try:
+            now    = datetime.now(_IST)
+            target = now.replace(hour=_EOD_HOUR, minute=_EOD_MINUTE, second=0, microsecond=0)
+
+            if now >= target:
+                # Past 15:35 today — check if summary was missed
+                await _send_eod_summary()
+                # Schedule for tomorrow
+                target += timedelta(days=1)
+
+            wait_secs = (target - now).total_seconds()
+            logger.info(f"EOD summary scheduled in {wait_secs/60:.1f} min")
+            await asyncio.sleep(wait_secs)
+            await _send_eod_summary()
+
+        except asyncio.CancelledError:
+            logger.info("EOD summary loop cancelled")
+            break
+        except Exception:
+            import traceback
+            logger.error(f"EOD summary error:\n{traceback.format_exc()}")
+            await asyncio.sleep(60)
 
 
 async def _seed_credentials() -> None:

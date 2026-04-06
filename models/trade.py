@@ -33,5 +33,6 @@ class DailyStat(Base):
     realized_pnl = Column(Float, default=0.0)
     trade_count  = Column(Float, default=0)
     is_halted    = Column(String, default="false")
+    summary_sent = Column(String, default="false")
     updated_at   = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc),
                           onupdate=lambda: datetime.now(timezone.utc))

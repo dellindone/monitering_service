@@ -82,6 +82,51 @@ def notify_daily_summary(date: str, daily_pnl: float, trade_count: int, halted: 
     )
 
 
+def notify_eod_summary(date: str, closed_trades: list, open_trades: list, daily_pnl: float, halted: bool, halted_reason: str | None) -> None:
+    total_gross = sum(t.pnl or 0 for t in closed_trades)
+    total_net   = total_gross
+    charges_total = 0.0
+
+    lines = [f"📋 <b>EOD Summary — {date}</b>\n"]
+
+    if closed_trades:
+        lines.append(f"<b>Closed Trades ({len(closed_trades)})</b>")
+        for t in closed_trades:
+            emoji = "🟢" if (t.pnl or 0) >= 0 else "🔴"
+            try:
+                c = calculate_charges(t.symbol, int(t.quantity), t.buy_price, t.current_price or t.buy_price)
+                net = (t.pnl or 0) - c["total_charges"]
+                charges_total += c["total_charges"]
+                charges_str = f" | Net: ₹{net:+,.0f}"
+            except Exception:
+                charges_str = ""
+            lines.append(
+                f"{emoji} <code>{t.symbol}</code> qty={int(t.quantity)} "
+                f"buy=₹{t.buy_price:.2f} exit=₹{(t.current_price or 0):.2f} "
+                f"P&amp;L: ₹{(t.pnl or 0):+,.0f}{charges_str}"
+            )
+        total_net = total_gross - charges_total
+        lines.append("")
+
+    if open_trades:
+        lines.append(f"<b>Still Open ({len(open_trades)})</b>")
+        for t in open_trades:
+            lines.append(f"🔵 <code>{t.symbol}</code> qty={int(t.quantity)} buy=₹{t.buy_price:.2f} sl=₹{t.sl_price:.2f}")
+        lines.append("")
+
+    gross_emoji = "🟢" if total_gross >= 0 else "🔴"
+    net_emoji   = "🟢" if total_net >= 0 else "🔴"
+    status      = f"HALTED ({halted_reason})" if halted else "RUNNING"
+
+    lines.append(f"{gross_emoji} <b>Gross P&amp;L : ₹{total_gross:+,.2f}</b>")
+    if charges_total:
+        lines.append(f"   Charges  : ₹{charges_total:,.2f}")
+        lines.append(f"{net_emoji} <b>Net P&amp;L   : ₹{total_net:+,.2f}</b>")
+    lines.append(f"Status     : {status}")
+
+    _send("\n".join(lines))
+
+
 def notify_kill_switch(activated: bool, reason: str) -> None:
     emoji = "🚨" if activated else "✅"
     action = "ACTIVATED" if activated else "DEACTIVATED"

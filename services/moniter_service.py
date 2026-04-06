@@ -173,25 +173,33 @@ class MonitorService:
                         continue
 
                     broker_symbols.add(symbol)
-                    buy_price = float(pos.get("net_price", 0))
+                    buy_price, order_id = broker.get_latest_buy_order(symbol, Segment.FNO)
+                    if not buy_price:
+                        buy_price = float(pos.get("credit_price") or pos.get("net_price") or 0)
 
                     if symbol in known_trade_map:
-                        # Check if qty changed (manual lots added)
                         existing = known_trade_map[symbol]
+                        updates  = {}
                         if int(qty) != int(existing.quantity):
-                            await trade_repo.update_trade(db, str(existing.id), {"quantity": qty})
+                            updates["quantity"] = qty
                             self._trade_manager.update_quantity(str(existing.id), qty)
                             logger.info(f"Trade qty updated: {symbol} {existing.quantity} → {qty}")
+                        if not existing.broker_order_id and order_id:
+                            updates["broker_order_id"] = order_id
+                            logger.info(f"Trade order_id updated: {symbol} → {order_id}")
+                        if updates:
+                            await trade_repo.update_trade(db, str(existing.id), updates)
                         continue
 
                     sl_price = strategy.initial_sl(buy_price)
                     trade = await trade_repo.create_trade(db, {
-                        "symbol":    symbol,
-                        "quantity":  qty,
-                        "buy_price": buy_price,
-                        "sl_price":  sl_price,
-                        "state":     "OPEN",
-                        "source":    "EXTERNAL",
+                        "symbol":          symbol,
+                        "quantity":        qty,
+                        "buy_price":       buy_price,
+                        "sl_price":        sl_price,
+                        "state":           "OPEN",
+                        "source":          "EXTERNAL",
+                        "broker_order_id": order_id,
                     })
                     self._trade_manager.register_trade(
                         trade_id  = str(trade.id),
