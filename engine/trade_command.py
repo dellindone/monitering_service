@@ -26,7 +26,7 @@ class BuyCommand(TradeCommand):
         symbol: str,
         quantity: int,
         segment: Segment = Segment.FNO,
-        product: Product = Product.MIS,
+        product: Product = Product.NRML,
     ):
         self._broker   = broker
         self._symbol   = symbol
@@ -78,7 +78,7 @@ class SellCommand(TradeCommand):
         symbol: str,
         quantity: int,
         segment: Segment = Segment.FNO,
-        product: Product = Product.MIS,
+        product: Product = Product.NRML,
     ):
         self._broker   = broker
         self._symbol   = symbol
