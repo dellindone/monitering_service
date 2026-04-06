@@ -53,7 +53,7 @@ class TradeMonitor(PriceObserver):
 
         try:
             # Trail the SL up if price has moved in our favour
-            new_sl = self._strategy.updated_sl(self.buy_price, self.sl_price, price)
+            new_sl = self._strategy.update_sl(self.buy_price, self.sl_price, price)
             if new_sl > self.sl_price:
                 logger.info(f"[{self.trade_id}] SL trailed {self.sl_price} → {new_sl} | price={price}")
                 self.sl_price = new_sl
