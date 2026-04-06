@@ -1,39 +1,39 @@
 from abc import ABC, abstractmethod
-from config import get_settings
+from core.vix_tracker import vix_tracker
+
 
 class StoplossStrategy(ABC):
     @abstractmethod
     def initial_sl(self, buy_price: float) -> float:
         ...
-    
+
     @abstractmethod
     def update_sl(self, buy_price: float, current_sl: float, current_price: float) -> float:
+        ...
+
+    @abstractmethod
+    def is_hard_sl(self, buy_price: float, current_sl: float) -> bool:
         ...
 
 
 class TrailingStoplossStrategy(StoplossStrategy):
 
-    def __init__(self):
-        settings = get_settings()
-        self._sl_pct = settings.sl_percent / 100
-        self._step_pct = settings.trailing_step / 100
-
     def initial_sl(self, buy_price: float) -> float:
-        return round(buy_price * (1 - self._sl_pct), 2)
-    
-    def update_sl(self, buy_price: float, current_sl: float, current_price: float):
-        gain = (current_price - buy_price) / buy_price
-        bands_crossed = int(gain / self._step_pct)
+        params = vix_tracker.get_sl_params()
+        return round(buy_price - params.sl_points, 2)
 
-        if bands_crossed <= 0:
-            return current_sl
+    def update_sl(self, buy_price: float, current_sl: float, current_price: float) -> float:
+        params = vix_tracker.get_sl_params()
+        breakeven_trigger = buy_price * (1 + params.breakeven_pct)
 
-        # SL sits 5% below the last completed band level
-        # e.g. buy=100, step=5%: band1=105, band2=110, band3=115...
-        # at band1: SL = 105 * 0.95 = 99.75 (just under buy, protecting capital)
-        # at band2: SL = 110 * 0.95 = 104.50
-        # at band3: SL = 115 * 0.95 = 109.25
-        band_price = buy_price * (1 + bands_crossed * self._step_pct)
-        new_sl = round(band_price * (1 - self._sl_pct), 2)
+        if current_price < breakeven_trigger:
+            return current_sl  # Phase 1: hard stop only, no trailing yet
+
+        trail_points = max(params.trail_min, round(buy_price * params.trail_pct, 2))
+        new_sl = round(current_price - trail_points, 2)
         return max(new_sl, current_sl)  # never moves down
-    
+
+    def is_hard_sl(self, buy_price: float, current_sl: float) -> bool:
+        """True while SL is still at the initial hard stop level (before breakeven)."""
+        params = vix_tracker.get_sl_params()
+        return current_sl <= buy_price - params.sl_points + 0.01

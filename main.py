@@ -7,6 +7,7 @@ from fastapi.responses import JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
 
 from brokers.factory import BrokerFactory
+from core.vix_tracker import vix_tracker
 from services.moniter_service import monitor_service
 from services.signal_consumer import signal_consumer
 from api.trades_router import router as trades_router
@@ -47,6 +48,10 @@ async def _startup():
     active_broker = credential_manager.get_active_broker()
     rest_broker   = BrokerFactory.create_rest(active_broker)
     feed_broker   = BrokerFactory.create_feed(active_broker)
+
+    # Wire VIX tracker and start refresh loop
+    vix_tracker.set_broker(rest_broker)
+    asyncio.create_task(vix_tracker.start_refresh_loop())
 
     # Start monitor service + signal consumer
     await monitor_service.start(rest_broker, feed_broker)

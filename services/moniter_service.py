@@ -1,5 +1,7 @@
 import asyncio
 import traceback
+from datetime import datetime, time as dtime
+from zoneinfo import ZoneInfo
 
 from brokers.base import BrokerRestAdapter, BrokerFeedAdapter, Segment
 from brokers.factory import BrokerFactory
@@ -14,6 +16,15 @@ from config import get_settings
 import core.telegram as tg
 
 logger = get_logger(__name__)
+
+_IST          = ZoneInfo("Asia/Kolkata")
+_MARKET_OPEN  = dtime(9, 15)
+_MARKET_CLOSE = dtime(15, 30)
+
+
+def _is_market_open() -> bool:
+    now = datetime.now(_IST).time()
+    return _MARKET_OPEN <= now <= _MARKET_CLOSE
 
 
 class MonitorService:
@@ -139,6 +150,9 @@ class MonitorService:
         while True:
             try:
                 await asyncio.sleep(self._settings.external_scan_interval)
+                if not _is_market_open():
+                    logger.debug("Market closed — skipping external scan")
+                    continue
                 await self._scan_external_trades()
             except asyncio.CancelledError:
                 logger.info("External scan loop cancelled")

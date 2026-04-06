@@ -20,10 +20,6 @@ class Settings(BaseSettings):
     lot_size_multiplier_sensex:    int = 1
     lot_size_multiplier_stock:     int = 1
 
-    # Trailing SL
-    sl_percent: float = 5.0
-    trailing_step: float = 5.0
-
     # Kill switch
     daily_loss_limit: float = 5000.0
     daily_target: float = 10000.0
