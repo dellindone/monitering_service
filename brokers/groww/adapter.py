@@ -96,10 +96,16 @@ class GrowwAdapter(BrokerRestAdapter):
 
     def get_order_executed_price(self, order_id: str, segment: Segment) -> float | None:
         try:
-            status = self._client.get_order_status(segment=segment.value, groww_order_id=order_id)
-            price = status.get("average_price") or status.get("avg_price")
-            if price:
-                return float(price)
+            result = self._client.get_trade_list_for_order(
+                groww_order_id=order_id, segment=segment.value
+            )
+            logger.info(f"Trade list for order {order_id}: {result}")
+            trades = result.get("trades", result.get("trade_list", []))
+            if trades:
+                # First trade = actual fill price
+                price = trades[0].get("price") or trades[0].get("trade_price") or trades[0].get("traded_price")
+                if price and float(price) > 0:
+                    return float(price)
         except Exception:
             logger.error(traceback.format_exc())
         return None
