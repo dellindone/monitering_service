@@ -12,9 +12,9 @@ class CredentialManager:
     def __new__(cls):
         if cls._instance is None:
             cls._instance = super().__new__(cls)
-            cls._instance._credentials: dict = {}       # broker_name → credentials dict
-            cls._instance._active_broker: str = None
-            cls._instance._refresh_callbacks: list = [] # called when credentials change
+            cls._instance._accounts: dict = {}      # record_id → {broker_name, is_active, credentials...}
+            cls._instance._active_id: str = None    # record_id of the active account
+            cls._instance._refresh_callbacks: list = []
         return cls._instance
 
     # ── load ──────────────────────────────────────────────────────────
@@ -24,12 +24,18 @@ class CredentialManager:
         try:
             async with AsyncSessionFactory() as db:
                 all_records = await credentials_repo.get_all(db)
+                self._accounts = {}
                 for record in all_records:
-                    self._credentials[record.broker_name] = record.credentials
+                    rid = str(record.id)
+                    self._accounts[rid] = {
+                        "broker_name": record.broker_name,
+                        "is_active":   record.is_active,
+                        **(record.credentials or {}),
+                    }
                     if record.is_active:
-                        self._active_broker = record.broker_name
+                        self._active_id = rid
 
-            logger.info(f"Credentials loaded | active broker: {self._active_broker}")
+            logger.info(f"Credentials loaded | {len(self._accounts)} account(s) | active_id={self._active_id}")
         except Exception:
             logger.error(traceback.format_exc())
             raise
@@ -37,50 +43,43 @@ class CredentialManager:
     # ── read ──────────────────────────────────────────────────────────
 
     def get(self, broker_name: str) -> dict:
-        creds = self._credentials.get(broker_name)
-        if not creds:
-            raise ValueError(f"No credentials in memory for broker: {broker_name}")
-        return creds
+        """Return credentials for the active account (broker_name kept for compatibility)."""
+        if not self._active_id:
+            raise ValueError("No active broker set")
+        return self._accounts[self._active_id]
 
     def get_active_broker(self) -> str:
-        if not self._active_broker:
+        if not self._active_id:
             raise ValueError("No active broker set")
-        return self._active_broker
+        return self._accounts[self._active_id]["broker_name"]
 
     def get_inactive_accounts(self) -> list[dict]:
         """Return credentials for all non-active accounts."""
-        inactive = []
-        for broker_name, creds in self._credentials.items():
-            if broker_name != self._active_broker:
-                inactive.append({"broker_name": broker_name, **creds})
-        return inactive
+        return [
+            creds for rid, creds in self._accounts.items()
+            if rid != self._active_id
+        ]
 
     # ── update ────────────────────────────────────────────────────────
 
     async def update(self, broker_name: str, credentials: dict) -> None:
-        """Update credentials in DB and memory, then trigger refresh."""
+        """Update credentials in DB and memory, then trigger refresh if active."""
         async with AsyncSessionFactory() as db:
             await credentials_repo.upsert(db, broker_name, credentials)
+        await self.load()
 
-        self._credentials[broker_name] = credentials
-        logger.info(f"Credentials updated in memory for broker: {broker_name}")
-
-        if broker_name == self._active_broker:
+        if self._active_id and self._accounts[self._active_id]["broker_name"] == broker_name:
             await self._trigger_refresh(broker_name)
 
     async def set_active_broker(self, broker_name: str) -> None:
-        """Switch the active broker and trigger full re-initialization."""
         async with AsyncSessionFactory() as db:
             await credentials_repo.set_active(db, broker_name)
-
-        self._active_broker = broker_name
-        logger.info(f"Active broker switched to: {broker_name}")
+        await self.load()
         await self._trigger_refresh(broker_name)
 
     # ── refresh callbacks ─────────────────────────────────────────────
 
     def on_refresh(self, callback) -> None:
-        """Register a callback to be called when credentials change."""
         self._refresh_callbacks.append(callback)
 
     async def _trigger_refresh(self, broker_name: str) -> None:

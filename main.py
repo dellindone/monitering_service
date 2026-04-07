@@ -82,32 +82,36 @@ _EOD_HOUR, _EOD_MINUTE = 15, 35
 
 
 async def _send_eod_summary() -> None:
+    date_str = datetime.now(_IST).strftime("%d %b %Y")
+
+    # ── Active account (DB-tracked) ───────────────────────────────────
     async with AsyncSessionFactory() as db:
         already_sent = await trade_repo.is_summary_sent(db)
-        if already_sent:
-            logger.info("EOD summary already sent today — skipping")
-            return
-        closed_trades = await trade_repo.get_today_closed_trades(db)
-        open_trades   = await trade_repo.get_open_trades(db)
 
-    risk        = DailyRiskManager()
-    risk_status = risk.status()
-    date_str    = datetime.now(_IST).strftime("%d %b %Y")
+    if not already_sent:
+        async with AsyncSessionFactory() as db:
+            closed_trades = await trade_repo.get_today_closed_trades(db)
+            open_trades   = await trade_repo.get_open_trades(db)
 
-    tg.notify_eod_summary(
-        date          = date_str,
-        closed_trades = closed_trades,
-        open_trades   = open_trades,
-        daily_pnl     = risk_status["realized_pnl"],
-        halted        = risk_status["halted"],
-        halted_reason = risk_status["halted_reason"],
-    )
+        risk        = DailyRiskManager()
+        risk_status = risk.status()
 
-    async with AsyncSessionFactory() as db:
-        await trade_repo.mark_summary_sent(db)
-    logger.info("EOD summary sent and marked in DB")
+        tg.notify_eod_summary(
+            date          = date_str,
+            closed_trades = closed_trades,
+            open_trades   = open_trades,
+            daily_pnl     = risk_status["realized_pnl"],
+            halted        = risk_status["halted"],
+            halted_reason = risk_status["halted_reason"],
+        )
 
-    # Send read-only EOD summaries for all inactive accounts
+        async with AsyncSessionFactory() as db:
+            await trade_repo.mark_summary_sent(db)
+        logger.info("EOD summary sent and marked in DB")
+    else:
+        logger.info("Active account EOD summary already sent today — skipping")
+
+    # ── Inactive accounts (read-only from broker) ─────────────────────
     for account in credential_manager.get_inactive_accounts():
         await _send_inactive_account_eod_summary(account, date_str)
 
