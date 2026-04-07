@@ -50,8 +50,9 @@ class MonitorService:
         self._feed.start()
         logger.info("MonitorService started — price feed active")
 
-        # Resume any OPEN trades from DB (in case of restart)
-        await self._resume_open_trades()
+        # Reconcile with broker on startup — broker is source of truth.
+        # This registers live positions and marks stale DB trades as closed.
+        await self._scan_external_trades()
 
         # Start the external trade scan loop
         asyncio.create_task(self._external_scan_loop())
@@ -119,30 +120,6 @@ class MonitorService:
         except Exception:
             logger.error(traceback.format_exc())
 
-    # ── resume open trades on startup ─────────────────────────────────
-
-    async def _resume_open_trades(self) -> None:
-        try:
-            async with AsyncSessionFactory() as db:
-                open_trades = await trade_repo.get_open_trades(db)
-
-            if not open_trades:
-                logger.info("No open trades to resume")
-                return
-
-            for trade in open_trades:
-                self._trade_manager.register_trade(
-                    trade_id  = str(trade.id),
-                    symbol    = trade.symbol,
-                    quantity  = int(trade.quantity),
-                    buy_price = trade.buy_price,
-                    sl_price  = trade.sl_price,
-                    segment   = Segment.FNO,
-                )
-            logger.info(f"Resumed {len(open_trades)} open trade(s)")
-        except Exception:
-            logger.error(traceback.format_exc())
-
     # ── external trade scan ───────────────────────────────────────────
 
     async def _external_scan_loop(self) -> None:
@@ -203,6 +180,17 @@ class MonitorService:
                             logger.info(f"Trade order_id updated: {symbol} → {order_id}")
                         if updates:
                             await trade_repo.update_trade(db, str(existing.id), updates)
+                        # Register into monitor if not already active (e.g. on service restart)
+                        if str(existing.id) not in self._trade_manager._monitors:
+                            self._trade_manager.register_trade(
+                                trade_id  = str(existing.id),
+                                symbol    = existing.symbol,
+                                quantity  = int(qty),
+                                buy_price = existing.buy_price,
+                                sl_price  = existing.sl_price,
+                                segment   = Segment.FNO,
+                            )
+                            logger.info(f"Trade re-registered on startup: {symbol}")
                         continue
 
                     sl_price = strategy.initial_sl(buy_price)
