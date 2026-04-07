@@ -7,6 +7,21 @@ from core.exceptions import BrokerAuthError
 logger = get_logger(__name__)
 
 
+def create_groww_client(creds: dict) -> GrowwAPI:
+    """Create a GrowwAPI client directly from a credentials dict.
+    Used for read-only access to inactive accounts — no singleton."""
+    try:
+        api_key     = creds["api_key"].strip()
+        totp_secret = creds["totp_secret"].strip().upper()
+        totp_secret += "=" * ((8 - len(totp_secret) % 8) % 8)
+        totp         = pyotp.TOTP(totp_secret).now()
+        access_token = GrowwAPI.get_access_token(api_key=api_key, totp=totp)
+        return GrowwAPI(access_token)
+    except Exception as e:
+        logger.error(traceback.format_exc())
+        raise BrokerAuthError(f"Groww login failed for inactive account: {e}")
+
+
 class GrowwAuth:
     _instance: "GrowwAuth" = None
     _client: GrowwAPI = None

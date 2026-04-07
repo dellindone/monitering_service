@@ -7,6 +7,7 @@ from fastapi.responses import JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
 
 from brokers.factory import BrokerFactory
+from brokers.base import Segment
 from core.vix_tracker import vix_tracker
 from services.moniter_service import monitor_service
 from services.signal_consumer import signal_consumer
@@ -105,6 +106,51 @@ async def _send_eod_summary() -> None:
     async with AsyncSessionFactory() as db:
         await trade_repo.mark_summary_sent(db)
     logger.info("EOD summary sent and marked in DB")
+
+    # Send read-only EOD summaries for all inactive accounts
+    for account in credential_manager.get_inactive_accounts():
+        await _send_inactive_account_eod_summary(account, date_str)
+
+
+async def _send_inactive_account_eod_summary(creds: dict, date_str: str) -> None:
+    """Fetch positions + today's closed orders from an inactive broker account and send to Telegram."""
+    from brokers.groww.auth import create_groww_client
+    from datetime import date as date_type
+
+    account_label = creds.get("account_label") or creds.get("broker_name", "Account 2")
+    try:
+        client = create_groww_client(creds)
+
+        # Open positions
+        pos_response  = client.get_positions_for_user()
+        all_positions = pos_response.get("positions", [])
+        open_positions = [
+            p for p in all_positions
+            if isinstance(p, dict) and int(p.get("quantity", 0)) > 0
+        ]
+
+        # Today's closed (SELL) orders
+        today_str    = date_type.today().isoformat()
+        order_result = client.get_order_list(segment=Segment.FNO.value, page_size=100)
+        all_orders   = order_result.get("order_list", [])
+        closed_orders = [
+            o for o in all_orders
+            if isinstance(o, dict)
+            and o.get("transaction_type", "").upper() == "SELL"
+            and o.get("order_status", "").upper() in {"EXECUTED", "COMPLETED"}
+            and str(o.get("order_date", "") or o.get("created_at", "")).startswith(today_str)
+        ]
+
+        tg.notify_readonly_eod_summary(
+            date          = date_str,
+            account_label = account_label,
+            open_positions = open_positions,
+            closed_orders  = closed_orders,
+        )
+        logger.info(f"Inactive account EOD sent: {account_label}")
+    except Exception:
+        import traceback
+        logger.error(f"Inactive account EOD failed for {account_label}:\n{traceback.format_exc()}")
 
 
 async def _eod_summary_loop() -> None:

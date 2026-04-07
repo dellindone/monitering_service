@@ -47,6 +47,14 @@ class CredentialManager:
             raise ValueError("No active broker set")
         return self._active_broker
 
+    def get_inactive_accounts(self) -> list[dict]:
+        """Return credentials for all non-active accounts."""
+        inactive = []
+        for broker_name, creds in self._credentials.items():
+            if broker_name != self._active_broker:
+                inactive.append({"broker_name": broker_name, **creds})
+        return inactive
+
     # ── update ────────────────────────────────────────────────────────
 
     async def update(self, broker_name: str, credentials: dict) -> None:

@@ -82,12 +82,15 @@ def notify_daily_summary(date: str, daily_pnl: float, trade_count: int, halted: 
     )
 
 
-def notify_eod_summary(date: str, closed_trades: list, open_trades: list, daily_pnl: float, halted: bool, halted_reason: str | None) -> None:
+def notify_eod_summary(date: str, closed_trades: list, open_trades: list, daily_pnl: float, halted: bool, halted_reason: str | None, account_label: str = "") -> None:
     total_gross = sum(t.pnl or 0 for t in closed_trades)
     total_net   = total_gross
     charges_total = 0.0
 
-    lines = [f"📋 <b>EOD Summary — {date}</b>\n"]
+    header = f"📋 <b>EOD Summary — {date}</b>"
+    if account_label:
+        header += f" | <b>{account_label}</b>"
+    lines = [header + "\n"]
 
     if closed_trades:
         lines.append(f"<b>Closed Trades ({len(closed_trades)})</b>")
@@ -123,6 +126,34 @@ def notify_eod_summary(date: str, closed_trades: list, open_trades: list, daily_
         lines.append(f"   Charges  : ₹{charges_total:,.2f}")
         lines.append(f"{net_emoji} <b>Net P&amp;L   : ₹{total_net:+,.2f}</b>")
     lines.append(f"Status     : {status}")
+
+    _send("\n".join(lines))
+
+
+def notify_readonly_eod_summary(date: str, account_label: str, open_positions: list[dict], closed_orders: list[dict]) -> None:
+    """EOD summary for inactive (read-only) accounts — raw broker data, no DB."""
+    lines = [f"📋 <b>EOD Summary — {date}</b> | <b>{account_label}</b>\n"]
+
+    if closed_orders:
+        lines.append(f"<b>Closed Today ({len(closed_orders)})</b>")
+        for o in closed_orders:
+            symbol = o.get("trading_symbol", "")
+            qty    = o.get("quantity", 0)
+            price  = o.get("average_fill_price", 0)
+            lines.append(f"🔴 <code>{symbol}</code> qty={qty} exit=₹{float(price):.2f}")
+        lines.append("")
+
+    if open_positions:
+        lines.append(f"<b>Still Open ({len(open_positions)})</b>")
+        for p in open_positions:
+            symbol    = p.get("trading_symbol", "")
+            qty       = p.get("quantity", 0)
+            avg_price = p.get("credit_price") or p.get("net_price") or 0
+            lines.append(f"🔵 <code>{symbol}</code> qty={qty} avg=₹{float(avg_price):.2f}")
+        lines.append("")
+
+    if not closed_orders and not open_positions:
+        lines.append("No activity today.")
 
     _send("\n".join(lines))
 
