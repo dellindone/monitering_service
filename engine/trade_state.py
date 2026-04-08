@@ -32,5 +32,5 @@ class TradeStateMachine:
         self.state = new_state
 
     def is_terminal(self) -> bool:
-        return self.state in {TradeState.SL_HIT, TradeState.CLOSED, TradeState.FAILED}
+        return self.state in {TradeState.CLOSED, TradeState.FAILED}
     
